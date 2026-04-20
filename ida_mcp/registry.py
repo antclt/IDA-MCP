@@ -40,6 +40,8 @@ _launch_status: Dict[str, Dict[str, Any]] = {
     "http_proxy": {},
 }
 
+from .utils import display_path as _display_path
+
 
 def _gateway_internal_alive(timeout: float = 0.3) -> bool:
     try:
@@ -411,10 +413,10 @@ def _format_registry_server_failure() -> str:
     """Build a concise diagnostic string for gateway launch failures."""
     status = get_registry_server_status()
     parts = [
-        f"python={status.get('python') or _resolve_python_executable()}",
+        f"python={_display_path(status.get('python') or _resolve_python_executable())}",
     ]
     log_path = status.get("log") or _launch_log_path("registry_server")
-    parts.append(f"log={log_path}")
+    parts.append(f"log={_display_path(log_path)}")
     if status.get("last_error"):
         parts.append(f"last_error={status['last_error']}")
     return ", ".join(parts)

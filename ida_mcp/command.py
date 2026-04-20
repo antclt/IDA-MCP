@@ -24,6 +24,7 @@ _script_dir = str(pathlib.Path(__file__).resolve().parent)
 sys.path = [p for p in sys.path if p != _script_dir]
 
 from ida_mcp import control
+from ida_mcp.utils import display_path as _display_path
 
 
 EXIT_OK = 0
@@ -68,7 +69,7 @@ def _print_gateway_status(payload: dict[str, Any]) -> None:
         f"at {gateway_internal.get('host')}:{gateway_internal.get('port')}"
     )
     if gateway.get("log"):
-        print(f"Gateway log: {gateway['log']}")
+        print(f"Gateway log: {_display_path(gateway['log'])}")
     if gateway.get("last_error"):
         print(f"Gateway error: {gateway['last_error']}")
     print(
@@ -90,7 +91,7 @@ def _print_instances(payload: dict[str, Any]) -> None:
     for entry in payload["instances"]:
         port = entry.get("port")
         pid = entry.get("pid")
-        input_file = entry.get("input_file") or "<unknown>"
+        input_file = _display_path(entry.get("input_file")) or "<unknown>"
         print(f"pid={pid} port={port} input={input_file}")
 
 
@@ -112,7 +113,7 @@ def _print_select(payload: dict[str, Any]) -> None:
     print(f"Selected port: {payload['selected_port']}")
     if instance:
         print(f"PID: {instance.get('pid')}")
-        print(f"Input: {instance.get('input_file') or '<unknown>'}")
+        print(f"Input: {_display_path(instance.get('input_file')) or '<unknown>'}")
 
 
 def _print_data_payload(payload: dict[str, Any]) -> None:

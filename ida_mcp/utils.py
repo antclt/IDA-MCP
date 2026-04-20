@@ -7,14 +7,48 @@
     paginate()             - 分页辅助
     pattern_filter()       - Glob 模式过滤
     is_valid_c_identifier() - C 标识符验证
+    display_path()         - 路径显示规范化（仅供展示层使用）
 """
 
 from __future__ import annotations
 
+import os
 import re
 import string
 import fnmatch
 from typing import Any, List, Dict, Optional, Tuple, Union, TypedDict
+
+# ---------------------------------------------------------------------------
+# Platform detection — resolved once at import time
+# ---------------------------------------------------------------------------
+
+IS_WINDOWS: bool = os.name == "nt"
+"""True on Windows (including MSYS / Cygwin Python)."""
+
+
+# ---------------------------------------------------------------------------
+# Display-path helper (presentation layer only)
+# ---------------------------------------------------------------------------
+
+def display_path(path: Optional[str]) -> str:
+    """Return a path string using the OS-native separator for display.
+
+    On Windows, forward slashes are replaced with backslashes (``\\``).
+    On macOS / Linux, the path is returned as-is (already ``/``).
+    ``None`` returns ``""``.
+
+    .. warning::
+
+       This function is **only** for human-facing output (CLI text,
+       log lines, UI labels).  Do *not* use it in machine-readable
+       API payloads or return structs consumed by other tools or tests.
+    """
+    if path is None:
+        return ""
+    text = str(path)
+    if IS_WINDOWS and "/" in text:
+        text = text.replace("/", "\\")
+    return text
 
 
 class ParseResult(TypedDict):

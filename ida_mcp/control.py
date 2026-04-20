@@ -26,9 +26,10 @@ from .errors import error_payload, normalize_error_payload
 
 
 def gateway_status_payload() -> dict[str, Any]:
-    gateway = registry.get_registry_server_status()
+    gateway = dict(registry.get_registry_server_status())
     proxy = registry.get_http_proxy_status()
-    instances = registry.get_instances() if gateway.get("alive") else []
+    raw_instances = registry.get_instances() if gateway.get("alive") else []
+    instances = [dict(i) for i in raw_instances]
     return {
         "gateway": gateway,
         "proxy": proxy,
@@ -108,7 +109,7 @@ def select_target_port(port: Optional[int] = None) -> dict[str, Any]:
             )
 
     instance = next(
-        (entry for entry in get_instances() if entry.get("port") == selected), None
+        (dict(entry) for entry in get_instances() if entry.get("port") == selected), None
     )
     return {
         "selected_port": selected,
@@ -203,7 +204,8 @@ def shutdown_gateway(
 
 def list_ida_instances() -> dict[str, Any]:
     gateway = registry.get_registry_server_status()
-    instances = registry.get_instances() if gateway.get("alive") else []
+    raw_instances = registry.get_instances() if gateway.get("alive") else []
+    instances = [dict(i) for i in raw_instances]
     return {
         "gateway_alive": bool(gateway.get("alive")),
         "count": len(instances),
