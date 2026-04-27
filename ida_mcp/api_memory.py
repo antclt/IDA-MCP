@@ -1,9 +1,9 @@
-"""内存 API - 内存读取操作。
+"""Memory API - memory read operations.
 
-提供工具:
-    - get_bytes          读取原始字节
-    - read_scalar        读取标量整数
-    - get_string         读取字符串
+Provides tools:
+    - get_bytes          read raw bytes
+    - read_scalar        read scalar integers
+    - get_string         read strings
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from .rpc import tool
 from .sync import idaread
 from .utils import parse_address, normalize_list_input, hex_addr
 
-# IDA 模块导入
+# IDA module imports
 try:
     import idaapi  # type: ignore
     import ida_bytes  # type: ignore
@@ -27,7 +27,7 @@ except ImportError:
 
 
 # ============================================================================
-# 字节读取
+# Byte reading
 # ============================================================================
 
 @tool
@@ -75,7 +75,7 @@ def get_bytes(
 
 
 # ============================================================================
-# 标量读取
+# Scalar reading
 # ============================================================================
 
 @tool
@@ -90,7 +90,7 @@ def read_scalar(
 
 
 def _read_scalar(addr: Union[int, str], width: int, signed: bool = False) -> List[dict]:
-    """内部: 读取标量整数。"""
+    """Internal: read scalar integer."""
     if width not in (1, 2, 4, 8):
         return [{"error": "width must be one of 1, 2, 4, or 8", "width": width}]
 
@@ -136,7 +136,7 @@ def _read_scalar(addr: Union[int, str], width: int, signed: bool = False) -> Lis
 
 
 # ============================================================================
-# 字符串读取
+# String reading
 # ============================================================================
 
 @tool
@@ -162,18 +162,18 @@ def get_string(
         
         address = parsed["value"]
         try:
-            # 读取字节直到 null
+            # read bytes until null terminator
             data = idaapi.get_bytes(address, max_len)
             if data is None:
                 results.append({"error": "failed to read", "query": query, "address": hex_addr(address)})
                 continue
             
-            # 查找 null 终止符
+            # find null terminator
             null_pos = data.find(b'\x00')
             if null_pos >= 0:
                 data = data[:null_pos]
             
-            # 尝试解码
+            # attempt decoding
             try:
                 text = data.decode('utf-8')
             except UnicodeDecodeError:

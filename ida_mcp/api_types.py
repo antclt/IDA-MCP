@@ -1,14 +1,14 @@
-"""类型 API - 类型操作。
+"""Types API - type operations.
 
-提供工具:
-    - declare_struct       声明/更新结构体
-    - declare_enum         声明/更新枚举
-    - declare_typedef      声明/更新 typedef
-    - set_function_prototype  设置函数原型
-    - set_local_variable_type 设置局部变量类型
-    - set_global_variable_type 设置全局变量类型
-    - list_structs         列出结构体
-    - get_struct_info      获取结构体详情
+Provides tools:
+    - declare_struct       declare/update struct
+    - declare_enum         declare/update enum
+    - declare_typedef      declare/update typedef
+    - set_function_prototype  set function prototype
+    - set_local_variable_type set local variable type
+    - set_global_variable_type set global variable type
+    - list_structs         list structs
+    - get_struct_info      get struct details
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .rpc import tool
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, is_valid_c_identifier, hex_addr
 
-# IDA 模块导入
+# IDA module imports
 try:
     import idaapi  # type: ignore
 except ImportError:
@@ -55,23 +55,23 @@ try:
 except ImportError:
     ida_kernwin = None
 
-# PT_SIL = 1: 静默解析，不显示语法错误对话框
+# PT_SIL = 1: silent parse, do not show syntax-error dialogs
 PT_SIL = getattr(ida_typeinf, 'PT_SIL', 1)
-# PT_TYP = 2: 解析类型声明 (struct/union/enum/typedef)
+# PT_TYP = 2: parse type declarations (struct/union/enum/typedef)
 PT_TYP = getattr(ida_typeinf, 'PT_TYP', 2)
-# PT_EMPTY = 0x4000: 允许空声明
+# PT_EMPTY = 0x4000: allow empty declarations
 PT_EMPTY = getattr(ida_typeinf, 'PT_EMPTY', 0x4000)
 
 
 def _parse_decls_python(decls: str, hti_flags: int) -> tuple:
-    """使用 IDAPython API 调用 parse_decls。
-    
-    返回:
+    """Call parse_decls via the IDAPython API.
+
+    Returns:
         (errors: int, messages: List[str])
     """
     try:
         # ida_typeinf.parse_decls(til, input, printer, hti_flags)
-        # 使用默认类型库
+        # use default type library
         errors = ida_typeinf.parse_decls(ida_typeinf.get_idati(), decls, False, hti_flags)
         return (errors, [])
     except Exception as e:
@@ -115,7 +115,7 @@ def _parse_type_fragment_tinfo(type_text: str, temp_name: str) -> tuple[Any, lis
 
 
 # ============================================================================
-# 类型声明
+# Type declarations
 # ============================================================================
 
 def _parse_decl_tinfo(decl_text: str) -> tuple[Any, Optional[str], list[str]]:
@@ -177,7 +177,7 @@ def _apply_named_type(name: str, tinfo: Any, existed: bool) -> tuple[bool, List[
     except Exception as e:
         set_errors.append(f"set_named_type: {e}")
     
-    # 方法 2: tinfo_t.set_named_type (IDA 9.x)
+    # method 2: tinfo_t.set_named_type (IDA 9.x)
     if not ok:
         try:
             ok = bool(tinfo.set_named_type(None, name, ida_typeinf.NTF_REPLACE if existed else 0))  # type: ignore
@@ -301,7 +301,7 @@ def declare_typedef(
 
 
 # ============================================================================
-# 函数原型
+# Function prototypes
 # ============================================================================
 
 @tool
@@ -331,7 +331,7 @@ def set_function_prototype(
     
     start_ea = int(f.start_ea)
     
-    # 获取旧类型
+    # get old type
     old_decl = None
     try:
         old_t = ida_typeinf.tinfo_t()
@@ -343,7 +343,7 @@ def set_function_prototype(
     except Exception:
         pass
     
-    # 解析新类型
+    # parse new type
     tinfo = ida_typeinf.tinfo_t()
     parsed_name = None
     parse_ok = False
@@ -370,7 +370,7 @@ def set_function_prototype(
     if not parse_ok or not tinfo or not tinfo.is_func():
         return {"error": "parse failed or not a function type", "details": parse_errors[:2]}
     
-    # 应用类型
+    # apply type
     try:
         applied = idaapi.apply_tinfo(start_ea, tinfo, idaapi.TINFO_DEFINITE)
     except Exception:
@@ -379,7 +379,7 @@ def set_function_prototype(
         except Exception as e:
             return {"error": f"apply failed: {e}"}
     
-    # 获取新类型
+    # get new type
     new_decl = None
     try:
         nt = ida_typeinf.tinfo_t()
@@ -401,7 +401,7 @@ def set_function_prototype(
 
 
 # ============================================================================
-# 局部变量类型
+# Local variable types
 # ============================================================================
 
 @tool
@@ -426,14 +426,14 @@ def set_local_variable_type(
     
     type_text = new_type.strip()
     
-    # 初始化 Hex-Rays
+    # initialize Hex-Rays
     try:
         if not ida_hexrays.init_hexrays_plugin():
             return {"error": "failed to init hex-rays"}
     except Exception:
         return {"error": "failed to init hex-rays"}
     
-    # 定位函数
+    # locate function
     try:
         f = ida_funcs.get_func(parsed["value"])
     except Exception:
@@ -448,7 +448,7 @@ def set_local_variable_type(
     if not cfunc:
         return {"error": "decompile returned None"}
     
-    # 查找局部变量
+    # find local variable
     target = None
     try:
         for lv in cfunc.lvars:  # type: ignore
@@ -464,7 +464,7 @@ def set_local_variable_type(
     if not target:
         return {"error": "local variable not found"}
     
-    # 获取原类型
+    # get original type
     old_type_str = None
     try:
         old_t = target.type()
@@ -476,12 +476,12 @@ def set_local_variable_type(
     except Exception:
         pass
     
-    # 解析新类型
+    # parse new type
     tinfo, errors, candidate_decl = _parse_type_fragment_tinfo(type_text, "__ida_mcp_lvar")
     if not tinfo:
         return {"error": "parse type failed", "details": errors[:2], "candidate_decl": candidate_decl}
     
-    # 应用
+    # apply
     try:
         if hasattr(target, "set_lvar_type"):
             applied = target.set_lvar_type(tinfo)  # type: ignore[attr-defined]
@@ -492,7 +492,7 @@ def set_local_variable_type(
     except Exception as e:
         return {"error": f"set_lvar_type failed: {e}"}
     
-    # 获取新类型
+    # get new type
     new_type_str = None
     try:
         nt = target.type()
@@ -520,7 +520,7 @@ def set_local_variable_type(
 
 
 # ============================================================================
-# 全局变量类型
+# Global variable types
 # ============================================================================
 
 @tool
@@ -545,7 +545,7 @@ def set_global_variable_type(
     if ea == idaapi.BADADDR:
         return {"error": "global not found"}
     
-    # 拒绝函数起始
+    # reject function starts
     try:
         f = ida_funcs.get_func(ea)
         if f and int(f.start_ea) == int(ea):
@@ -553,7 +553,7 @@ def set_global_variable_type(
     except Exception:
         pass
     
-    # 获取旧类型
+    # get old type
     old_type_str = None
     try:
         ot = ida_typeinf.tinfo_t()
@@ -565,12 +565,12 @@ def set_global_variable_type(
     except Exception:
         pass
     
-    # 解析新类型
+    # parse new type
     tinfo, errors, candidate_decl = _parse_type_fragment_tinfo(type_text, "__ida_mcp_global")
     if not tinfo:
         return {"error": "parse type failed", "details": errors[:2], "candidate_decl": candidate_decl}
     
-    # 应用
+    # apply
     try:
         applied = idaapi.apply_tinfo(ea, tinfo, idaapi.TINFO_DEFINITE)
     except Exception:
@@ -579,7 +579,7 @@ def set_global_variable_type(
         except Exception as e:
             return {"error": f"apply failed: {e}"}
     
-    # 获取新类型
+    # get new type
     new_type_str = None
     try:
         nt = ida_typeinf.tinfo_t()
@@ -601,7 +601,7 @@ def set_global_variable_type(
 
 
 # ============================================================================
-# 结构体列表
+# Struct list
 # ============================================================================
 
 @tool
@@ -663,7 +663,7 @@ def list_structs(
 
 
 # ============================================================================
-# 结构体详情
+# Struct details
 # ============================================================================
 
 @tool
@@ -681,7 +681,7 @@ def get_struct_info(
         til = ida_typeinf.get_idati()
         tif = ida_typeinf.tinfo_t()
         
-        # 尝试按名称获取类型
+        # try to get type by name
         if not tif.get_named_type(til, name):
             return {"error": "type not found", "name": name}
         
@@ -691,7 +691,7 @@ def get_struct_info(
         kind = "struct" if tif.is_struct() else "union"
         size = tif.get_size()
         
-        # 获取成员详情
+        # get member details
         udt = ida_typeinf.udt_type_data_t()
         members: List[dict] = []
         
@@ -701,10 +701,10 @@ def get_struct_info(
                     member = udt[i]
                     mname = member.name if member.name else f"field_{i}"
                     mtype = member.type
-                    moffset = member.offset // 8  # 位转字节
+                    moffset = member.offset // 8  # bits to bytes
                     msize = member.size // 8 if member.size else None
                     
-                    # 获取类型字符串
+                    # get type string
                     mtype_str = None
                     if mtype:
                         try:

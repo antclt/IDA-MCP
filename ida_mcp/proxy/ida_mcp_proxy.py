@@ -1,22 +1,22 @@
-"""IDA MCP 代理 (协调器客户端) - stdio 传输入口
+"""IDA MCP Proxy (coordinator client) - stdio transport entrypoint
 
-使用 stdio 传输的 MCP 服务器，通过协调器访问多个 IDA 实例。
+MCP server using stdio transport, accessing multiple IDA instances through the coordinator.
 
-架构
+Architecture
 ====================
 proxy/
-├── __init__.py           # 模块导出
-├── _server.py            # 共享的 FastMCP server (stdio/HTTP 复用)
-├── lifecycle.py          # proxy 侧生命周期操作
-├── register_tools.py     # 集中注册所有转发工具
-├── ida_mcp_proxy.py      # stdio 传输入口 (本文件)
-├── _http.py              # HTTP 辅助函数
-└── _state.py             # 状态管理和实例选择
+├── __init__.py           # module exports
+├── _server.py            # shared FastMCP server (reused by stdio/HTTP)
+├── lifecycle.py          # proxy-side lifecycle operations
+├── register_tools.py     # centralized registration of all forwarded tools
+├── ida_mcp_proxy.py      # stdio transport entrypoint (this file)
+├── _http.py              # HTTP helpers
+└── _state.py             # state management and instance selection
 
-使用方式
+Usage
 ====================
-直接运行: python ida_mcp_proxy.py
-或模块运行: python -m ida_mcp.proxy.ida_mcp_proxy
+Run directly: python ida_mcp_proxy.py
+Or as module: python -m ida_mcp.proxy.ida_mcp_proxy
 """
 from __future__ import annotations
 
@@ -34,17 +34,17 @@ else:
 
 
 # ============================================================================
-# 入口 - stdio 传输
+# Entrypoint - stdio transport
 # ============================================================================
 
 if __name__ == "__main__":
     import signal
     
     def _signal_handler(sig: int, frame: Any) -> None:
-        """优雅退出。"""
+        """Graceful exit."""
         sys.exit(0)
     
-    # 注册信号处理 (Windows 只支持 SIGINT)
+    # register signal handler (Windows only supports SIGINT)
     signal.signal(signal.SIGINT, _signal_handler)
     if hasattr(signal, 'SIGTERM'):
         signal.signal(signal.SIGTERM, _signal_handler)
@@ -52,4 +52,4 @@ if __name__ == "__main__":
     try:
         server.run(show_banner=False)
     except KeyboardInterrupt:
-        pass  # 静默退出
+        pass  # silent exit

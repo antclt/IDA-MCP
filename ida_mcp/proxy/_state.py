@@ -1,4 +1,4 @@
-"""状态管理 - 实例选择和转发。"""
+"""State management - instance selection and forwarding."""
 
 from __future__ import annotations
 
@@ -10,18 +10,18 @@ from ._http import http_get, http_post
 
 
 def get_instances() -> List[dict]:
-    """获取所有实例列表。"""
+    """Get the list of all instances."""
     data = http_get("/instances")
     return data if isinstance(data, list) else []
 
 
 def is_valid_port(p: Any) -> bool:
-    """验证端口格式有效性 (1-65535)。"""
+    """Validate port format (1-65535)."""
     return isinstance(p, int) and 1 <= p <= 65535
 
 
 def is_registered_port(port: int) -> bool:
-    """验证端口是否对应已注册的实例。"""
+    """Check whether the port corresponds to a registered instance."""
     instances = get_instances()
     return any(i.get("port") == port for i in instances)
 
@@ -40,12 +40,12 @@ def _is_auto_routable(instance: dict) -> bool:
 
 
 def choose_port(port: Optional[int] = None) -> Optional[int]:
-    """选择目标端口。
+    """Select target port.
 
-    若显式提供 port，则只做有效性验证。
-    若未提供，则按无状态策略自动选择：
-    1. 优先端口 10000
-    2. 否则取最小已注册端口
+    If port is explicitly provided, only validate its validity.
+    If not provided, auto-select using a stateless strategy:
+    1. prefer port 10000
+    2. otherwise take the smallest registered port
     """
     if port is not None:
         if not is_valid_port(port):
@@ -70,20 +70,20 @@ def forward(
     port: Optional[int] = None,
     timeout: Optional[int] = None,
 ) -> Any:
-    """统一转发调用到后端。
+    """Unified forwarding call to the backend.
 
-    参数:
-        tool: 工具名称
-        params: 工具参数
-        port: 指定端口 (可选，未指定则使用当前选中的实例)
-        timeout: 自定义超时秒数 (可选，未指定则使用默认值)
+    Args:
+        tool: tool name
+        params: tool parameters
+        port: specific port (optional; if omitted, uses the currently selected instance)
+        timeout: custom timeout in seconds (optional; if omitted, uses the default)
 
-    返回:
-        工具调用结果，或错误字典
+    Returns:
+        tool call result, or an error dict
     """
-    # 确定目标端口
+    # determine target port
     if port is not None:
-        # 用户指定了端口，验证有效性
+        # user specified a port; validate it
         if not is_valid_port(port):
             return error_payload(
                 "invalid_port",
@@ -98,7 +98,7 @@ def forward(
             )
         target_port = port
     else:
-        # 自动选择端口
+        # auto-select port
         target_port = choose_port()
         if target_port is None:
             return error_payload(
@@ -106,22 +106,22 @@ def forward(
                 "No IDA instances available. Please ensure IDA is running with the MCP plugin loaded.",
             )
 
-    # 构造请求
+    # build request
     body: dict = {"tool": tool, "params": params or {}, "port": int(target_port)}
     if timeout and timeout > 0:
         body["timeout"] = timeout
-    # HTTP 层超时需要比网关内部工具超时更长，留出锁获取+连接建立的余量
+    # HTTP-layer timeout should be longer than the gateway internal tool timeout to allow margin for lock acquisition + connection setup
     http_timeout = (timeout + 15) if (timeout and timeout > 0) else None
     result = http_post("/call", body, timeout=http_timeout)
 
-    # 处理结果
+    # process result
     if result is None:
         return error_payload(
             "gateway_unavailable",
             "Failed to connect to gateway. Ensure the standalone gateway is running and reachable.",
         )
 
-    # 提取实际数据
+    # extract actual data
     if isinstance(result, dict):
         if "error" in result:
             return normalize_error_payload(

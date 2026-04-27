@@ -1,9 +1,9 @@
-"""栈帧 API - 栈帧操作。
+"""Stack frame API - stack frame operations.
 
-提供工具:
-    - stack_frame          获取栈帧变量
-    - declare_stack        创建栈变量
-    - delete_stack         删除栈变量
+Provides tools:
+    - stack_frame          get stack frame variables
+    - declare_stack        create stack variables
+    - delete_stack         delete stack variables
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from .rpc import tool
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, normalize_list_input, hex_addr, is_valid_c_identifier
 
-# IDA 模块导入
+# IDA module imports
 try:
     import idaapi  # type: ignore
     import ida_funcs  # type: ignore
@@ -27,9 +27,9 @@ except ImportError:
     ida_typeinf = None
     ida_hexrays = None
 
-from . import compat  # IDA 8.x/9.x 兼容层
+from . import compat  # IDA 8.x/9.x compatibility layer
 
-# 使用兼容层的版本检测
+# use compatibility layer version detection
 IDA9_OR_LATER = compat.IDA9_OR_LATER
 
 PT_SIL = getattr(ida_typeinf, 'PT_SIL', 1) if ida_typeinf is not None else 1
@@ -147,7 +147,7 @@ def _define_stack_member(f: Any, offset: int, name: str, tif: Any) -> tuple[bool
 
 
 # ============================================================================
-# 栈帧信息
+# Stack frame info
 # ============================================================================
 
 @tool
@@ -168,10 +168,10 @@ def stack_frame(
 
 
 def _stack_frame_single(query: str) -> dict:
-    """获取单个函数的栈帧信息。"""
+    """Get stack frame info for a single function."""
     parsed = parse_address(query)
     if not parsed["ok"]:
-        # 尝试作为函数名
+        # try as function name
         try:
             ea = idaapi.get_name_ea(idaapi.BADADDR, query)
             if ea == idaapi.BADADDR:
@@ -200,8 +200,8 @@ def _stack_frame_single(query: str) -> dict:
     local_variables: List[dict] = []
     hexrays_error = None
     
-    # 获取 IDA 栈帧结构
-    # 方法 1: IDA 9.x - 使用 func.frame + tinfo_t
+    # get IDA stack frame structure
+    # method 1: IDA 9.x - use func.frame + tinfo_t
     if IDA9_OR_LATER:
         try:
             tif = ida_typeinf.tinfo_t()
@@ -224,7 +224,7 @@ def _stack_frame_single(query: str) -> dict:
         except Exception:
             pass
     
-    # 方法 2: 传统栈帧 (ida_frame.get_frame) - 作为回退
+    # method 2: traditional stack frame (ida_frame.get_frame) - fallback
     if not frame_variables:
         frame = None
         try:
@@ -267,7 +267,7 @@ def _stack_frame_single(query: str) -> dict:
             except Exception:
                 pass
     
-    # 获取 Hex-Rays 局部变量（始终尝试，获取所有局部变量）
+    # get Hex-Rays local variables (always attempt to retrieve all locals)
     try:
         if ida_hexrays.init_hexrays_plugin():  # type: ignore
             cfunc = ida_hexrays.decompile(f.start_ea)  # type: ignore
@@ -282,7 +282,7 @@ def _stack_frame_single(query: str) -> dict:
                         except Exception:
                             pass
                         
-                        # 判断变量位置
+                        # determine variable location
                         is_stk = hasattr(lv, 'is_stk_var') and lv.is_stk_var()
                         is_reg = hasattr(lv, 'is_reg_var') and lv.is_reg_var()
                         
@@ -308,7 +308,7 @@ def _stack_frame_single(query: str) -> dict:
     except Exception:
         hexrays_error = "hex-rays decompile failed"
     
-    # 如果两者都为空
+    # if both are empty
     if not frame_variables and not local_variables:
         if hexrays_error:
             return {
@@ -326,22 +326,22 @@ def _stack_frame_single(query: str) -> dict:
             "note": "no stack frame or local variables",
         }
     
-    # 返回结构：优先使用 local_variables（更完整），frame_variables 作为补充
+    # return structure: prefer local_variables (more complete), frame_variables as supplement
     result: dict = {
         "query": query,
         "name": fname,
         "start_ea": hex_addr(f.start_ea),
     }
     
-    # 主要返回 Hex-Rays 局部变量（如果有）
+    # primarily return Hex-Rays local variables (if available)
     if local_variables:
         result["variables"] = local_variables
         result["method"] = "hexrays"
-        # 如果也有栈帧结构，作为补充信息
+        # if stack frame structure is also available, include as supplementary info
         if frame_variables:
             result["frame_structure"] = frame_variables
     else:
-        # 只有栈帧结构
+        # only stack frame structure available
         result["variables"] = frame_variables
         result["method"] = "ida_frame"
     
@@ -349,7 +349,7 @@ def _stack_frame_single(query: str) -> dict:
 
 
 # ============================================================================
-# 栈变量创建/删除
+# Stack variable creation/deletion
 # ============================================================================
 
 @tool
@@ -385,7 +385,7 @@ def declare_stack(
             results.append(_error("name is not a valid C identifier", item=item))
             continue
         
-        # 解析函数地址
+        # parse function address
         parsed = parse_address(func_addr)
         if not parsed["ok"] or parsed["value"] is None:
             results.append({"error": "invalid function_address", "item": item})
@@ -484,7 +484,7 @@ def delete_stack(
             results.append({"error": "no stack frame", "item": item})
             continue
         
-        # 查找并删除成员
+        # find and delete member
         try:
             member = compat.get_member_by_name(frame, name)
             if member:

@@ -1,7 +1,7 @@
-"""IDA 版本兼容层。
+"""IDA version compatibility layer.
 
-处理 IDA 8.x 和 IDA 9.x 之间的 API 差异。
-IDA 9.x 移除了 ida_struct 模块，结构体操作改用 ida_typeinf。
+Handles API differences between IDA 8.x and IDA 9.x.
+IDA 9.x removed the ida_struct module; struct operations now use ida_typeinf.
 """
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ try:
 except ImportError:
     idaapi = None
 
-# 检测 IDA 版本
+# detect IDA version
 if idaapi:
     IDA_VERSION = idaapi.IDA_SDK_VERSION if hasattr(idaapi, 'IDA_SDK_VERSION') else 0
 else:
     IDA_VERSION = 0
 IDA9_OR_LATER = IDA_VERSION >= 900
 
-# 尝试导入 ida_struct (IDA 8.x)
+# try importing ida_struct (IDA 8.x)
 try:
     import ida_struct as _ida_struct  # type: ignore
     HAS_IDA_STRUCT = True
@@ -39,32 +39,32 @@ except ImportError:
 
 
 # ============================================================================
-# 结构体 ID 和获取
+# Struct ID and retrieval
 # ============================================================================
 
 def get_struc_id(name: str) -> int:
-    """获取结构体 ID。"""
+    """Get struct ID."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_struc_id(name)  # type: ignore
-    # IDA 9.x: 使用 idc
+    # IDA 9.x: use idc
     return idc.get_struc_id(name)
 
 
 def get_struc(sid: int) -> Any:
-    """获取结构体对象。"""
+    """Get struct object."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_struc(sid)  # type: ignore
-    # IDA 9.x: 返回 sid 本身作为标识
+    # IDA 9.x: return sid itself as identifier
     if sid == idaapi.BADADDR:
         return None
     return sid
 
 
 def get_struc_size(s: Any) -> int:
-    """获取结构体大小。"""
+    """Get struct size."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_struc_size(s)  # type: ignore
-    # IDA 9.x: s 是 sid
+    # IDA 9.x: s is sid
     if s is None:
         return 0
     result = idc.get_struc_size(s)
@@ -72,28 +72,28 @@ def get_struc_size(s: Any) -> int:
 
 
 # ============================================================================
-# 成员操作
+# Member operations
 # ============================================================================
 
 def get_member(s: Any, offset: int) -> Any:
-    """获取指定偏移的成员。"""
+    """Get member at the given offset."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_member(s, offset)  # type: ignore
-    # IDA 9.x: 使用 idc
+    # IDA 9.x: use idc
     if s is None:
         return None
     mid = idc.get_member_id(s, offset)
     if mid == idaapi.BADADDR or mid == -1:
         return None
-    # 返回一个简单的成员对象
+    # return a simple member object
     return _MemberCompat(s, offset, mid)
 
 
 def get_member_by_name(s: Any, name: str) -> Any:
-    """按名称获取成员。"""
+    """Get member by name."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_member_by_name(s, name)  # type: ignore
-    # IDA 9.x: 遍历查找
+    # IDA 9.x: iterate to find
     if s is None:
         return None
     size = get_struc_size(s)
@@ -115,7 +115,7 @@ def get_member_by_name(s: Any, name: str) -> Any:
 
 
 def get_first_member(s: Any) -> Any:
-    """获取第一个成员。"""
+    """Get first member."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_first_member(s)  # type: ignore
     # IDA 9.x
@@ -125,14 +125,14 @@ def get_first_member(s: Any) -> Any:
 
 
 def get_next_member(s: Any, offset: int) -> Any:
-    """获取下一个成员。"""
+    """Get next member."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_next_member(s, offset)  # type: ignore
     # IDA 9.x
     if s is None:
         return None
     size = get_struc_size(s)
-    # 跳过当前成员
+    # skip current member
     msize = idc.get_member_size(s, offset)
     next_off = offset + (msize if msize > 0 else 1)
     while next_off < size:
@@ -144,7 +144,7 @@ def get_next_member(s: Any, offset: int) -> Any:
 
 
 def get_member_name(mid_or_member: Any) -> Optional[str]:
-    """获取成员名称。"""
+    """Get member name."""
     if HAS_IDA_STRUCT:
         if isinstance(mid_or_member, int):
             return _ida_struct.get_member_name(mid_or_member)  # type: ignore
@@ -156,7 +156,7 @@ def get_member_name(mid_or_member: Any) -> Optional[str]:
 
 
 def get_member_id(m: Any) -> int:
-    """获取成员 ID。"""
+    """Get member ID."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_member_id(m)  # type: ignore
     # IDA 9.x
@@ -166,7 +166,7 @@ def get_member_id(m: Any) -> int:
 
 
 def get_member_size(m: Any) -> int:
-    """获取成员大小。"""
+    """Get member size."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_member_size(m)  # type: ignore
     # IDA 9.x
@@ -176,7 +176,7 @@ def get_member_size(m: Any) -> int:
 
 
 def get_member_offset(m: Any) -> int:
-    """获取成员偏移。"""
+    """Get member offset."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_member_offset(m)  # type: ignore
     # IDA 9.x
@@ -186,16 +186,16 @@ def get_member_offset(m: Any) -> int:
 
 
 def get_member_tinfo(tif: Any, m: Any) -> bool:
-    """获取成员类型信息。"""
+    """Get member type information."""
     if HAS_IDA_STRUCT:
         return _ida_struct.get_member_tinfo(tif, m)  # type: ignore
-    # IDA 9.x: 使用 ida_typeinf
-    # NOTE: get_numbered_type(m.sid) 将 sid (struct id) 作为 numbered type
-    # ordinal 使用，这在 IDA 9.x 中可能需要改用 get_named_type 或
-    # get_type_by_tid。如果 IDA 9.x 的栈帧类型获取出现问题，请检查此处。
+    # IDA 9.x: use ida_typeinf
+    # NOTE: get_numbered_type(m.sid) uses sid (struct id) as a numbered type
+    # ordinal; in IDA 9.x this may need to switch to get_named_type or
+    # get_type_by_tid. If stack-frame type retrieval fails on IDA 9.x, check here.
     if isinstance(m, _MemberCompat):
         try:
-            # IDA 9.x 中结构体成员类型需要通过 ida_typeinf 获取
+            # in IDA 9.x, struct member types must be retrieved via ida_typeinf
             sptr = ida_typeinf.get_idati().get_numbered_type(m.sid)
             if sptr:
                 udt = ida_typeinf.udt_type_data_t()
@@ -211,7 +211,7 @@ def get_member_tinfo(tif: Any, m: Any) -> bool:
 
 
 # ============================================================================
-# 成员添加/删除
+# Member add/remove
 # ============================================================================
 
 def add_struc_member(
@@ -222,10 +222,10 @@ def add_struc_member(
     typeid: Any,
     size: int
 ) -> int:
-    """添加结构体成员。"""
+    """Add struct member."""
     if HAS_IDA_STRUCT:
         return _ida_struct.add_struc_member(s, name, offset, flag, typeid, size)  # type: ignore
-    # IDA 9.x: 使用 idc
+    # IDA 9.x: use idc
     if s is None:
         return -1
     result = idc.add_struc_member(s, name, offset, flag, typeid, size)
@@ -233,21 +233,21 @@ def add_struc_member(
 
 
 def del_struc_member(s: Any, offset: int) -> bool:
-    """删除结构体成员。"""
+    """Delete struct member."""
     if HAS_IDA_STRUCT:
         return _ida_struct.del_struc_member(s, offset)  # type: ignore
-    # IDA 9.x: 使用 idc
+    # IDA 9.x: use idc
     if s is None:
         return False
     return bool(idc.del_struc_member(s, offset))
 
 
 # ============================================================================
-# 兼容类
+# Compatibility class
 # ============================================================================
 
 class _MemberCompat:
-    """IDA 9.x 成员兼容对象。"""
+    """IDA 9.x member compatibility object."""
     
     def __init__(self, sid: int, offset: int, mid: int):
         self.sid = sid

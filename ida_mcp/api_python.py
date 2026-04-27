@@ -1,7 +1,7 @@
-"""Python 执行 API - 在 IDA 上下文中执行任意 Python 代码。
+"""Python execution API - execute arbitrary Python code in the IDA context.
 
-提供工具:
-    - py_eval    在 IDA 上下文中执行 Python 代码
+Provides tools:
+    - py_eval    execute Python code in the IDA context
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Annotated
 from .rpc import tool, unsafe
 from .sync import idawrite
 
-# IDA 模块导入
+# IDA module imports
 try:
     import idaapi  # type: ignore
     import idc  # type: ignore
@@ -50,7 +50,7 @@ except ImportError:
 
 
 def _lazy_import(module_name: str):
-    """延迟导入 IDA 模块，失败时返回 None。"""
+    """Lazily import an IDA module, returning None on failure."""
     try:
         return __import__(module_name)
     except Exception:
