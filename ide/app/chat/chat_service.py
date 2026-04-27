@@ -29,7 +29,7 @@ from app.chat.streaming import (
     make_run_completed_event,
     make_run_failed_event,
     make_run_started_event,
-    normalize_langgraph_event,
+    normalize_langgraph_events,
 )
 from shared.database import DatabaseStore
 
@@ -189,6 +189,11 @@ class ChatServiceWorker(QObject):
         # Accumulate assistant content
         assistant_content = ""
 
+        # Track tool calls for persistence (tool_call_id → ChatMessage).
+        # Using tool_call_id (unique per invocation) instead of tool_name
+        # avoids data loss when the same tool is called multiple times.
+        pending_tool_msgs: dict[str, ChatMessage] = {}
+
         try:
             # Build agent
             agent, _tools = await self._factory.build(run_config)
@@ -222,14 +227,83 @@ class ChatServiceWorker(QObject):
 
                 mode, data = event_bundle[0], event_bundle[1]
 
-                stream_event = normalize_langgraph_event(
+                stream_events = normalize_langgraph_events(
                     mode, data, conversation_id, turn_id
                 )
-                if stream_event is not None:
+                for stream_event in stream_events:
                     # Accumulate tokens
                     if stream_event.type == "token":
                         chunk = stream_event.payload.get("content", "")
-                        assistant_content += chunk
+                        if isinstance(chunk, list):
+                            # Safety: join list blocks into a string
+                            parts = []
+                            for b in chunk:
+                                if isinstance(b, str):
+                                    parts.append(b)
+                                elif isinstance(b, dict) and b.get("type") == "text":
+                                    parts.append(b.get("text", ""))
+                            chunk = "".join(parts)
+                        if chunk:
+                            assistant_content += chunk
+
+                    elif stream_event.type == "tool_start":
+                        # Flush accumulated assistant text as a segment before
+                        # the tool message, so DB order is correct on reload.
+                        if assistant_content:
+                            seg_msg = ChatMessage(
+                                conversation_id=conversation_id,
+                                turn_id=turn_id,
+                                role="assistant",
+                                content=assistant_content,
+                            )
+                            self._persistence.save_message(seg_msg)
+                            assistant_content = ""
+
+                        # Persist tool call start
+                        tool_name = stream_event.payload.get("tool_name", "")
+                        tool_call_id = stream_event.payload.get("tool_call_id", "")
+                        args = stream_event.payload.get("args", {})
+                        try:
+                            import json as _json
+                            args_json = _json.dumps(args, ensure_ascii=False)
+                        except (TypeError, ValueError):
+                            args_json = str(args)
+                        tool_msg = ChatMessage(
+                            conversation_id=conversation_id,
+                            turn_id=turn_id,
+                            role="tool",
+                            content=args_json,
+                            tool_name=tool_name,
+                            tool_call_id=tool_call_id,
+                        )
+                        self._persistence.save_message(tool_msg)
+                        # Use tool_call_id as key — unique per invocation,
+                        # unlike tool_name which collides on repeated calls.
+                        pending_tool_msgs[tool_call_id or tool_name] = tool_msg
+
+                    elif stream_event.type in ("tool_result", "tool_error"):
+                        # Update persisted tool message with result
+                        tool_call_id = stream_event.payload.get("tool_call_id", "")
+                        tool_name = stream_event.payload.get("tool_name", "")
+                        key = tool_call_id or tool_name
+                        result = stream_event.payload.get("result", "")
+                        error = stream_event.payload.get("error", "")
+                        combined = result or error or ""
+                        if key in pending_tool_msgs:
+                            # Update the existing message with the result
+                            msg_id = pending_tool_msgs[key].id
+                            old_content = pending_tool_msgs[key].content or ""
+                            try:
+                                import json as _json
+                                combined_data = {
+                                    "args": _json.loads(old_content),
+                                    "result": combined,
+                                }
+                                new_content = _json.dumps(combined_data, ensure_ascii=False)
+                            except (ValueError, TypeError, _json.JSONDecodeError):
+                                new_content = f"Args: {old_content}\nResult: {combined}"
+                            self._persistence.update_message_content(msg_id, new_content)
+                            del pending_tool_msgs[key]
 
                     self._emit(stream_event)
 
@@ -251,13 +325,16 @@ class ChatServiceWorker(QObject):
                 self._persistence.save_message(assistant_msg)
 
                 # Update conversation
+                updates: dict[str, Any] = {
+                    "status": "idle",
+                    "updated_at": ChatMessage().created_at,
+                }
+                inferred = self._infer_title(user_message, assistant_content)
+                if inferred:
+                    updates["title"] = inferred
                 self._persistence.update_conversation_by_pk(
                     conversation_id,
-                    status="idle",
-                    updated_at=ChatMessage().created_at,
-                    title=self._infer_title(
-                        user_message, assistant_content
-                    ),
+                    **updates,
                 )
 
         except AgentBuildError as exc:

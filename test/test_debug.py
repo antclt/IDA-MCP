@@ -1,19 +1,19 @@
-"""测试调试器相关工具。
+"""Tests for debugger-related tools.
 
-测试前提：
-1. 调试器类型已在 IDA 中手动配置好
-2. 如有 PDB 对话框弹出，手动关闭
+Prerequisites:
+1. Debugger type must be manually configured in IDA
+2. If a PDB dialog pops up, close it manually
 
-测试顺序：
-1. Phase 0: 断点管理（不需要调试器运行）
-2. Phase 1: 启动调试器
-3. Phase 2: 状态检查
-4. Phase 3: 单步执行
-5. Phase 9: 清理
+Test order:
+1. Phase 0: Breakpoint management (no running debugger required)
+2. Phase 1: Start debugger
+3. Phase 2: State inspection
+4. Phase 3: Stepping
+5. Phase 9: Cleanup
 
-运行方式：
-    pytest -m debug         # 只运行 debug 模块测试
-    pytest test_debug.py    # 运行此文件所有测试
+Run with:
+    pytest -m debug         # Run only debug module tests
+    pytest test_debug.py    # Run all tests in this file
 """
 import pytest
 import time
@@ -25,22 +25,22 @@ pytestmark = pytest.mark.debug
 
 
 class DebugState:
-    """调试器状态跟踪。"""
+    """Debugger state tracking."""
     breakpoint_address: Optional[int] = None
     debugger_started: bool = False
 
 
 class TestDebug0_Breakpoints:
-    """Phase 0: 断点管理。"""
+    """Phase 0: Breakpoint management."""
     
     def test_00_list_breakpoints(self, tool_caller):
-        """列出断点。"""
+        """List breakpoints."""
         result = tool_caller("dbg_list_bps")
         assert isinstance(result, dict)
         print(f"Breakpoints: {result}")
     
     def test_01_set_breakpoint(self, tool_caller, main_function, first_function_address):
-        """设置断点。"""
+        """Set breakpoint."""
         if main_function:
             addr = int(main_function["start_ea"], 16) if isinstance(main_function["start_ea"], str) else main_function["start_ea"]
         else:
@@ -53,13 +53,13 @@ class TestDebug0_Breakpoints:
         print(f"Set breakpoint at {hex(addr)}: {result}")
     
     def test_02_list_breakpoints_after_set(self, tool_caller):
-        """设置后列出断点。"""
+        """List breakpoints after setting."""
         result = tool_caller("dbg_list_bps")
         assert isinstance(result, dict)
         print(f"Breakpoints: {result}")
     
     def test_03_enable_breakpoint(self, tool_caller):
-        """启用断点。"""
+        """Enable breakpoint."""
         if not DebugState.breakpoint_address:
             pytest.skip("No breakpoint")
         
@@ -71,10 +71,10 @@ class TestDebug0_Breakpoints:
 
 
 class TestDebug1_Start:
-    """Phase 1: 启动调试器。"""
+    """Phase 1: Start debugger."""
     
     def test_10_start_debugger(self, tool_caller):
-        """启动调试器。"""
+        """Start debugger."""
         result = tool_caller("dbg_start")
         assert isinstance(result, dict)
         print(f"Start: {result}")
@@ -83,17 +83,17 @@ class TestDebug1_Start:
             DebugState.debugger_started = True
     
     def test_11_verify_state(self, tool_caller):
-        """验证调试器状态。"""
+        """Verify debugger state."""
         result = tool_caller("dbg_regs")
         assert isinstance(result, dict)
         print(f"Registers: {result}")
 
 
 class TestDebug2_Inspection:
-    """Phase 2: 状态检查。"""
+    """Phase 2: State inspection."""
     
     def test_20_get_registers(self, tool_caller):
-        """获取寄存器。"""
+        """Get registers."""
         if not DebugState.debugger_started:
             pytest.skip("Debugger not started")
         
@@ -102,7 +102,7 @@ class TestDebug2_Inspection:
         print(f"Registers: {result}")
     
     def test_21_get_call_stack(self, tool_caller):
-        """获取调用栈。"""
+        """Get call stack."""
         if not DebugState.debugger_started:
             pytest.skip("Debugger not started")
         
@@ -112,10 +112,10 @@ class TestDebug2_Inspection:
 
 
 class TestDebug3_Stepping:
-    """Phase 3: 单步执行。"""
+    """Phase 3: Stepping."""
     
     def test_30_step_into(self, tool_caller):
-        """单步进入。"""
+        """Step into."""
         if not DebugState.debugger_started:
             pytest.skip("Debugger not started")
         
@@ -125,7 +125,7 @@ class TestDebug3_Stepping:
         time.sleep(0.1)
     
     def test_31_step_over(self, tool_caller):
-        """单步跳过。"""
+        """Step over."""
         if not DebugState.debugger_started:
             pytest.skip("Debugger not started")
         
@@ -136,10 +136,10 @@ class TestDebug3_Stepping:
 
 
 class TestDebug9_Cleanup:
-    """Phase 9: 清理。"""
+    """Phase 9: Cleanup."""
     
     def test_90_delete_breakpoint(self, tool_caller):
-        """删除断点。"""
+        """Delete breakpoint."""
         if not DebugState.breakpoint_address:
             pytest.skip("No breakpoint")
         
@@ -150,7 +150,7 @@ class TestDebug9_Cleanup:
         print(f"Delete: {result}")
     
     def test_99_exit_debugger(self, tool_caller):
-        """退出调试器。"""
+        """Exit debugger."""
         if not DebugState.debugger_started:
             pytest.skip("Debugger not started")
         

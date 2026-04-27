@@ -70,6 +70,9 @@ INSTANCE_FAILURE_THRESHOLD = 2
 MAIN_THREAD_STALE_SECONDS = 30.0
 PENDING_INSTANCE_TTL_SECONDS = 180.0  # Reap "starting" instances after 3 min
 
+# TTL cache for _reap_dead_instances to avoid N TCP probes on every request.
+_last_reap_ts: list[float] = [0.0]
+
 
 def _short(v: Any) -> str:
     try:
@@ -103,6 +106,52 @@ def _find_instance_index_by_pid(pid: Any) -> Optional[int]:
         if entry.get("pid") == pid:
             return idx
     return None
+
+
+def _probe_port_alive(port: int, timeout: float = 1.0) -> bool:
+    """Return True if a TCP connection to localhost:port succeeds."""
+    try:
+        with socket.create_connection((LOCALHOST, port), timeout=timeout):
+            return True
+    except (ConnectionRefusedError, OSError, socket.timeout):
+        return False
+
+
+def _reap_dead_instances() -> int:
+    """Remove instances whose port is no longer reachable.
+
+    Must be called while ``_lock`` is held.  Returns the number removed.
+
+    Results are cached for ``_REAP_TTL_SECONDS`` to avoid N TCP probes
+    on every request.
+    """
+    import time as _time
+
+    _REAP_TTL_SECONDS = 5.0
+    now = _time.monotonic()
+    if now - _last_reap_ts < _REAP_TTL_SECONDS:
+        return 0
+
+    alive: List[Dict[str, Any]] = []
+    dead: List[Dict[str, Any]] = []
+    for entry in _instances:
+        port = entry.get("port")
+        if isinstance(port, int) and _probe_port_alive(port):
+            alive.append(entry)
+        else:
+            dead.append(entry)
+    if dead:
+        _instances.clear()
+        _instances.extend(alive)
+        for d in dead:
+            _debug_log(
+                "REAP_DEAD",
+                pid=d.get("pid"),
+                port=d.get("port"),
+                state=d.get("effective_state") or d.get("health"),
+            )
+    _last_reap_ts[0] = now
+    return len(dead)
 
 
 def _reap_stale_pending_instances() -> int:
@@ -337,6 +386,7 @@ async def _healthz(_: Request) -> JSONResponse:
 
 async def _instances_handler(_: Request) -> JSONResponse:
     with _lock:
+        _reap_dead_instances()
         _reap_stale_pending_instances()
         return JSONResponse([_public_instance_record(entry) for entry in _instances])
 
@@ -466,6 +516,7 @@ async def _call_handler(request: Request) -> JSONResponse:
         return JSONResponse({"error": "missing tool"}, status_code=400)
 
     with _lock:
+        _reap_dead_instances()
         _reap_stale_pending_instances()
         target = None
         if target_pid is not None:
@@ -513,8 +564,10 @@ async def _call_handler(request: Request) -> JSONResponse:
         _call_locks[port] = asyncio.Lock()
     call_lock = _call_locks[port]
 
+    acquired = False
     try:
         await asyncio.wait_for(call_lock.acquire(), timeout=effective_timeout + 5)
+        acquired = True
     except TimeoutError:
         err_detail = f"Timed out waiting for call lock on port {port}"
         _mark_instance_failure(port, INSTANCE_HEALTH_DEGRADED, err_detail, "lock")
@@ -569,7 +622,8 @@ async def _call_handler(request: Request) -> JSONResponse:
             {"error": f"call failed: {err_detail}"}, status_code=status_code
         )
     finally:
-        call_lock.release()
+        if acquired:
+            call_lock.release()
 
 
 def _build_internal_app() -> Starlette:

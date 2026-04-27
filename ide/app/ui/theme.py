@@ -23,7 +23,7 @@ class ThemeMode(Enum):
 # Design tokens: named constants for UI metrics and fonts
 # -----------------------------------------------------------------------
 
-# Fonts
+# Legacy font constants (kept for backward compat; prefer _Metrics)
 FONT_FAMILY = '"Segoe UI", "SF Pro Text", "Inter", sans-serif'
 MONO_FONT_FAMILY = '"Cascadia Code", "Consolas", monospace'
 MONO_FONT_SIZE = 10
@@ -35,13 +35,13 @@ def mono_font() -> QFont:
 
 
 # -----------------------------------------------------------------------
-# Syntax highlighting tokens (light theme; dark theme can extend later)
+# Syntax highlighting tokens
 # -----------------------------------------------------------------------
 
-SYNTAX_TOKENS: dict[str, tuple[str, bool]] = {
-    # token suffix → (hex colour, bold)
+SYNTAX_TOKENS_LIGHT: dict[str, tuple[str, bool]] = {
+    # token suffix -> (hex colour, bold)
     "Token.Comment":       ("#008000", False),
-    "Token.Keyword":       ("#0000FF", True),
+    "Token.Keyword":       ("#7C3AED", True),
     "Token.Literal.String": ("#A31515", False),
     "Token.Literal.Number": ("#098658", False),
     "Token.Name.Builtin":  ("#267F99", False),
@@ -53,28 +53,141 @@ SYNTAX_TOKENS: dict[str, tuple[str, bool]] = {
     "Token.Name.Variable": ("#001080", False),
 }
 
+SYNTAX_TOKENS_DARK: dict[str, tuple[str, bool]] = {
+    "Token.Comment":       ("#6A9955", False),
+    "Token.Keyword":       ("#C586C0", True),
+    "Token.Literal.String": ("#CE9178", False),
+    "Token.Literal.Number": ("#B5CEA8", False),
+    "Token.Name.Builtin":  ("#4EC9B0", False),
+    "Token.Name.Function": ("#DCDCAA", False),
+    "Token.Name.Class":    ("#4EC9B0", True),
+    "Token.Name.Decorator": ("#DCDCAA", False),
+    "Token.Name.Attribute": ("#9CDCFE", False),
+    "Token.Operator":      ("#D4D4D4", False),
+    "Token.Name.Variable": ("#9CDCFE", False),
+}
 
-def markdown_css(accent: str = "#3b82f6") -> str:
+# Keep legacy alias for backwards compat
+SYNTAX_TOKENS = SYNTAX_TOKENS_LIGHT
+
+
+def current_theme_mode() -> str:
+    """Return the active theme mode string ("light" or "dark").
+
+    Centralizes the ``QApplication -> activeWindow -> _theme_mode``
+    lookup that was previously duplicated in 4+ locations.
+    Falls back to "light" if no window is available.
+    """
+    try:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app:
+            mw = app.activeWindow()
+            return getattr(mw, "_theme_mode", "light") if mw else "light"
+    except Exception:
+        pass
+    return "light"
+
+
+def current_theme_mode_enum() -> ThemeMode:
+    """Return the active ThemeMode enum value."""
+    return ThemeMode.DARK if current_theme_mode() == "dark" else ThemeMode.LIGHT
+
+
+def current_palette() -> _Palette:
+    """Return the palette for the current theme mode."""
+    return Theme(current_theme_mode_enum())._palette
+
+
+def syntax_tokens(mode: ThemeMode | None = None) -> dict[str, tuple[str, bool]]:
+    """Return syntax tokens for the given mode (light default)."""
+    if mode == ThemeMode.DARK:
+        return SYNTAX_TOKENS_DARK
+    return SYNTAX_TOKENS_LIGHT
+
+
+def markdown_css(palette: _Palette | None = None, metrics: _Metrics | None = None) -> str:
     """Return the CSS string used inside the markdown preview HTML template.
 
-    Colours are parameterised so the caller can pass a theme-appropriate
-    accent colour (currently only the link colour varies).
+    Accepts a palette and metrics so colours and sizes adapt to light/dark
+    mode automatically.
     """
+    if palette is None:
+        palette = Theme._LIGHT
+    if metrics is None:
+        metrics = _DEFAULT_METRICS
+    c = palette
+    m = metrics
     return f"""\
-body {{ font-family: {FONT_FAMILY}; font-size: 14px; margin: 16px; }}
-pre, code {{ font-family: {MONO_FONT_FAMILY}; }}
-pre {{ font-size: 13px; background: #f6f8fa; padding: 12px; border-radius: 6px; overflow-x: auto; }}
-code {{ background: #f0f0f0; padding: 1px 4px; border-radius: 3px; }}
-pre code {{ background: none; padding: 0; }}
-h1, h2, h3, h4, h5, h6 {{ margin-top: 20px; margin-bottom: 8px; }}
-table {{ border-collapse: collapse; width: 100%; margin: 8px 0; }}
-th, td {{ border: 1px solid #ddd; padding: 6px 12px; text-align: left; }}
-th {{ background: #f5f5f5; font-weight: 600; }}
-blockquote {{ border-left: 3px solid #ddd; margin: 8px 0; padding: 4px 12px; color: #555; }}
-a {{ color: {accent}; }}
+body {{ font-family: {m.font_family}; font-size: {m.font_size_md}; color: {c.text_primary}; margin: {m.spacing_xl}; }}
+pre, code {{ font-family: {m.mono_family}; }}
+pre {{ font-size: 13px; background: {c.sidebar_bg}; color: {c.text_primary}; padding: {m.spacing_lg}; border: 1px solid {c.border}; border-radius: {m.radius_md}; overflow-x: auto; }}
+code {{ background: {c.sidebar_bg}; color: {c.text_primary}; padding: 1px {m.spacing_xs}; border-radius: {m.radius_xs}; }}
+pre code {{ background: none; padding: 0; border: none; }}
+h1, h2, h3, h4, h5, h6 {{ margin-top: {m.spacing_3xl}; margin-bottom: {m.spacing_md}; color: {c.accent}; }}
+table {{ border-collapse: collapse; width: 100%; margin: {m.spacing_md} 0; }}
+th, td {{ border: 1px solid {c.border}; padding: {m.spacing_sm} {m.spacing_lg}; text-align: left; }}
+th {{ background: {c.sidebar_bg}; font-weight: {m.font_weight_semibold}; }}
+blockquote {{ border-left: 3px solid {c.border}; margin: {m.spacing_md} 0; padding: {m.spacing_xs} {m.spacing_lg}; color: {c.text_secondary}; }}
+a {{ color: {c.accent}; }}
 img {{ max-width: 100%; }}\
 """
 
+
+# -----------------------------------------------------------------------
+# Design metrics: non-colour UI tokens
+# -----------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class _Metrics:
+    """Design tokens for UI metrics (sizes, spacing, fonts)."""
+
+    # Fonts
+    font_family: str = '"Segoe UI", "SF Pro Text", "Inter", sans-serif'
+    mono_family: str = '"Cascadia Code", "Consolas", monospace'
+    font_size_base: str = "10pt"
+    font_size_sm: str = "9pt"
+    font_size_xs: str = "8pt"
+    font_size_md: str = "12px"
+    font_size_lg: str = "14pt"
+
+    # Border radius
+    radius_xs: str = "3px"
+    radius_sm: str = "4px"
+    radius_md: str = "6px"
+    radius_lg: str = "8px"
+    radius_xl: str = "12px"
+    radius_round: str = "16px"
+    radius_pill: str = "10px"
+
+    # Spacing
+    spacing_xxs: str = "2px"
+    spacing_xs: str = "4px"
+    spacing_sm: str = "6px"
+    spacing_md: str = "8px"
+    spacing_lg: str = "12px"
+    spacing_xl: str = "16px"
+    spacing_2xl: str = "18px"
+    spacing_3xl: str = "20px"
+    spacing_4xl: str = "24px"
+
+    # Typography
+    letter_spacing_tight: str = "0.01em"
+    letter_spacing_normal: str = "0.02em"
+    letter_spacing_wide: str = "0.04em"
+    letter_spacing_xwide: str = "0.06em"
+    line_height_normal: str = "1.5"
+    font_weight_medium: str = "500"
+    font_weight_semibold: str = "600"
+    font_weight_bold: str = "700"
+
+
+_DEFAULT_METRICS = _Metrics()
+
+
+# -----------------------------------------------------------------------
+# Colour palette
+# -----------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
 class _Palette:
@@ -169,9 +282,10 @@ class Theme:
         header_bg="#141620",
     )
 
-    def __init__(self, mode: ThemeMode) -> None:
+    def __init__(self, mode: ThemeMode, metrics: _Metrics | None = None) -> None:
         self.mode = mode
         self._palette = self._LIGHT if mode == ThemeMode.LIGHT else self._DARK
+        self._metrics = metrics or _DEFAULT_METRICS
 
     # ------------------------------------------------------------------ #
     # Convenience accessors
@@ -202,22 +316,116 @@ class Theme:
         return self._palette.text_secondary
 
     # ------------------------------------------------------------------ #
-    # Stylesheet generation
+    # Stylesheet generation — per-component methods
     # ------------------------------------------------------------------ #
     def stylesheet(self) -> str:
         c = self._palette
+        m = self._metrics
+        return "\n".join([
+            self._global_styles(c, m),
+            self._sidebar_styles(c, m),
+            self._panel_styles(c, m),
+            self._workspace_styles(c, m),
+            self._settings_styles(c, m),
+            self._input_styles(c, m),
+            self._status_card_styles(c, m),
+            self._table_styles(c, m),
+            self._button_styles(c, m),
+            self._primary_button_styles(c, m),
+            self._tool_button_styles(c, m),
+            self._menu_styles(c, m),
+            self._statusbar_styles(c, m),
+            self._splitter_styles(c, m),
+            self._checkbox_styles(c, m),
+            self._scrollarea_styles(c, m),
+            self._scrollbar_styles(c, m),
+            self._tab_styles(c, m),
+            self._tooltip_styles(c, m),
+            self._messagebox_styles(c, m),
+            self._card_container_styles(c, m),
+            self._card_badge_styles(c, m),
+            self._card_toggle_styles(c, m),
+            self._card_edit_styles(c, m),
+            self._danger_button_styles(c, m),
+            self._card_separator_styles(c, m),
+            self._dialog_styles(c, m),
+            self._chat_layout_styles(c, m),
+            self._chat_role_styles(c, m),
+            self._chat_thinking_styles(c, m),
+            self._tool_trace_card_styles(c, m),
+            self._tool_call_styles(c, m),
+            self._chat_input_styles(c, m),
+            self._chat_button_styles(c, m),
+            self._chat_menu_styles(c, m),
+            self._session_sidebar_styles(c, m),
+            self._skill_card_styles(c, m),
+            self._chat_skill_styles(c, m),
+            self._chat_markdown_styles(c, m),
+            self._tool_trace_panel_styles(c, m),
+            self._advanced_toggle_styles(c, m),
+            self._skill_prompt_styles(c, m),
+            self._scroll_container_styles(c, m),
+            self._provider_menu_styles(c, m),
+        ])
+
+    # -- Global --
+
+    @staticmethod
+    def _global_styles(c: _Palette, m: _Metrics) -> str:
         return f"""
         /* ---- Global window ---- */
         QMainWindow {{
             background: {c.window_bg};
             color: {c.text_primary};
-            font-family: "Segoe UI", "SF Pro Text", "Inter", sans-serif;
+            font-family: {m.font_family};
         }}
 
         QWidget {{
-            font-family: "Segoe UI", "SF Pro Text", "Inter", sans-serif;
+            font-family: {m.font_family};
+            color: {c.text_primary};
+            font-size: {m.font_size_base};
         }}
 
+        /* ---- Generic labels ---- */
+        QLabel {{
+            color: {c.text_primary};
+        }}
+
+        /* ---- Page stack (right-side content) ---- */
+        QStackedWidget#pageStack {{
+            background: {c.window_bg};
+        }}
+
+        /* ---- Chat page ---- */
+        QWidget#chatPage {{
+            background: {c.panel_bg};
+        }}
+
+        /* ---- Message list area ---- */
+        QWidget#messageListArea {{
+            background: {c.panel_bg};
+        }}
+
+        /* ---- Composer area ---- */
+        QWidget#composerArea {{
+            background: {c.panel_bg};
+        }}
+
+        /* ---- Settings body ---- */
+        QWidget#settingsBody {{
+            background: {c.window_bg};
+        }}
+
+        /* ---- Status content ---- */
+        QWidget#statusContent {{
+            background: {c.window_bg};
+        }}"""
+
+    # -- Activity bar --
+
+    @staticmethod
+    def _sidebar_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Activity bar (sidebar icons) ---- */
         #activityBar {{
             background: {c.sidebar_bg};
@@ -227,7 +435,7 @@ class Theme:
         QToolButton#activityButton {{
             background: transparent;
             border: none;
-            border-radius: 8px;
+            border-radius: {m.radius_lg};
             padding: 9px;
             color: {c.text_secondary};
         }}
@@ -238,8 +446,13 @@ class Theme:
         QToolButton#activityButton[active="true"] {{
             background: {c.accent_subtle};
             color: {c.accent};
-        }}
+        }}"""
 
+    # -- Panels --
+
+    @staticmethod
+    def _panel_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Panels ---- */
         QFrame#panel {{
             background: {c.panel_bg};
@@ -249,16 +462,21 @@ class Theme:
         }}
         QLabel#panelTitle {{
             color: {c.text_primary};
-            font-size: 10pt;
-            font-weight: 600;
-            letter-spacing: 0.02em;
+            font-size: {m.font_size_base};
+            font-weight: {m.font_weight_semibold};
+            letter-spacing: {m.letter_spacing_normal};
             text-transform: uppercase;
-        }}
+        }}"""
 
+    # -- FS workspace --
+
+    @staticmethod
+    def _workspace_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- FS workspace minimal polish ---- */
         QSplitter#fsWorkspaceSplit::handle {{
             background: {c.border_light};
-            width: 4px;
+            width: {m.spacing_xs};
         }}
         QSplitter#fsWorkspaceSplit::handle:hover {{
             background: {c.border};
@@ -275,20 +493,20 @@ class Theme:
         QLabel#hexPathLabel,
         QLabel#imagePathLabel {{
             color: {c.text_primary};
-            font-size: 10pt;
-            font-weight: 600;
+            font-size: {m.font_size_base};
+            font-weight: {m.font_weight_semibold};
         }}
         QLabel#hexSizeLabel,
         QLabel#imageSizeLabel {{
             color: {c.text_secondary};
-            font-size: 9pt;
+            font-size: {m.font_size_sm};
         }}
         QLabel#hexReadonlyLabel {{
             color: {c.text_secondary};
-            font-size: 8pt;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            padding: 0 2px;
+            font-size: {m.font_size_xs};
+            font-weight: {m.font_weight_bold};
+            letter-spacing: {m.letter_spacing_xwide};
+            padding: 0 {m.spacing_xxs};
         }}
         QTreeView#dirTreeView,
         QTextEdit#codeEditor,
@@ -300,8 +518,8 @@ class Theme:
             background: {c.input_bg};
         }}
         QTreeView#dirTreeView::item {{
-            padding: 4px 6px;
-            margin: 1px 2px;
+            padding: {m.spacing_xs} {m.spacing_sm};
+            margin: 1px {m.spacing_xs};
         }}
         QTreeView#dirTreeView::item:selected {{
             background: {c.hover_bg};
@@ -309,64 +527,74 @@ class Theme:
         }}
         QLabel#imageLabel {{
             color: {c.text_secondary};
-            font-size: 10pt;
-            padding: 18px;
+            font-size: {m.font_size_base};
+            padding: {m.spacing_2xl};
         }}
         QPushButton#openFolderButton,
         QPushButton#codeSaveButton,
         QPushButton#codeMdToggle,
         QPushButton#hexEditToggle,
         QPushButton#hexSaveButton {{
-            padding: 6px 12px;
-        }}
+            padding: {m.spacing_sm} {m.spacing_lg};
+        }}"""
 
+    # -- Settings page typography --
+
+    @staticmethod
+    def _settings_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Settings page typography ---- */
         QFrame#settingsGroup {{
             background: {c.panel_bg};
             border: 1px solid {c.border_light};
-            border-radius: 8px;
-            padding: 16px;
+            border-radius: {m.radius_lg};
+            padding: {m.spacing_xl};
         }}
         QLabel#settingsGroupTitle {{
             color: {c.text_primary};
-            font-size: 10pt;
-            font-weight: 600;
+            font-size: {m.font_size_base};
+            font-weight: {m.font_weight_semibold};
             letter-spacing: 0;
         }}
         QLabel#settingsGroupDescription {{
             color: {c.text_secondary};
-            font-size: 9pt;
-            padding-bottom: 4px;
+            font-size: {m.font_size_sm};
+            padding-bottom: {m.spacing_xs};
         }}
         QLabel#settingsFieldLabel {{
             color: {c.text_primary};
-            font-weight: 600;
-            font-size: 9pt;
+            font-weight: {m.font_weight_semibold};
+            font-size: {m.font_size_sm};
         }}
         QLabel#settingsFieldDescription {{
             color: {c.text_secondary};
-            font-size: 8pt;
+            font-size: {m.font_size_xs};
         }}
         QLabel#settingsHint {{
             color: {c.text_secondary};
-            font-size: 8pt;
+            font-size: {m.font_size_xs};
             font-style: italic;
         }}
         QLabel#settingsErrorLabel {{
             color: {c.status_error};
-            font-size: 12px;
-        }}
+            font-size: {m.font_size_md};
+        }}"""
 
+    # -- Inputs --
+
+    @staticmethod
+    def _input_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Inputs ---- */
         QTreeWidget, QTextEdit, QLineEdit, QListWidget, QSpinBox, QComboBox, QTableWidget {{
             background: {c.input_bg};
             color: {c.text_primary};
             border: 1px solid {c.border};
-            border-radius: 6px;
-            padding: 6px 8px;
+            border-radius: {m.radius_md};
+            padding: {m.spacing_sm} {m.spacing_md};
             selection-background-color: {c.accent};
             selection-color: {c.accent_text};
-            font-size: 10pt;
+            font-size: {m.font_size_base};
         }}
         QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
             border: 2px solid {c.accent};
@@ -376,76 +604,91 @@ class Theme:
         QLineEdit:read-only {{
             background: {c.border_light};
             color: {c.text_secondary};
-        }}
+        }}"""
 
+    # -- Status cards --
+
+    @staticmethod
+    def _status_card_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Status cards ---- */
         QFrame#statusCard {{
             background: {c.panel_bg};
             border: none;
             border-top: 1px solid {c.border_light};
-            border-left: 4px solid {c.border};
+            border-left: {m.spacing_xs} solid {c.border};
         }}
         QFrame#statusCard[state="ok"] {{
-            border-left: 4px solid {c.status_ok};
+            border-left: {m.spacing_xs} solid {c.status_ok};
         }}
         QFrame#statusCard[state="warning"] {{
-            border-left: 4px solid {c.status_warning};
+            border-left: {m.spacing_xs} solid {c.status_warning};
         }}
         QFrame#statusCard[state="error"] {{
-            border-left: 4px solid {c.status_error};
+            border-left: {m.spacing_xs} solid {c.status_error};
         }}
         QFrame#statusCard[state="unknown"] {{
-            border-left: 4px solid {c.status_unknown};
+            border-left: {m.spacing_xs} solid {c.status_unknown};
         }}
         QLabel#statusCardTitle {{
             color: {c.text_primary};
-            font-size: 10pt;
-            font-weight: 700;
-            letter-spacing: 0.01em;
+            font-size: {m.font_size_base};
+            font-weight: {m.font_weight_bold};
+            letter-spacing: {m.letter_spacing_tight};
         }}
         QLabel#statusState[state="ok"] {{
             color: {c.status_ok};
-            font-weight: 700;
-            font-size: 10pt;
+            font-weight: {m.font_weight_bold};
+            font-size: {m.font_size_base};
         }}
         QLabel#statusState[state="warning"] {{
             color: {c.status_warning};
-            font-weight: 700;
-            font-size: 10pt;
+            font-weight: {m.font_weight_bold};
+            font-size: {m.font_size_base};
         }}
         QLabel#statusState[state="error"] {{
             color: {c.status_error};
-            font-weight: 700;
-            font-size: 10pt;
+            font-weight: {m.font_weight_bold};
+            font-size: {m.font_size_base};
         }}
         QLabel#statusState[state="unknown"] {{
             color: {c.status_unknown};
-            font-weight: 600;
-            font-size: 10pt;
-        }}
+            font-weight: {m.font_weight_semibold};
+            font-size: {m.font_size_base};
+        }}"""
 
+    # -- Table header --
+
+    @staticmethod
+    def _table_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Table header ---- */
         QHeaderView::section {{
             background: {c.header_bg};
             color: {c.text_secondary};
             border: none;
             border-bottom: 1px solid {c.border};
-            padding: 8px 6px;
-            font-weight: 600;
-            font-size: 8pt;
+            padding: {m.spacing_md} {m.spacing_sm};
+            font-weight: {m.font_weight_semibold};
+            font-size: {m.font_size_xs};
             text-transform: uppercase;
-            letter-spacing: 0.04em;
-        }}
+            letter-spacing: {m.letter_spacing_wide};
+        }}"""
 
+    # -- Buttons --
+
+    @staticmethod
+    def _button_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Buttons ---- */
         QPushButton {{
             background: {c.button_bg};
             color: {c.button_text};
             border: 1px solid {c.button_border};
-            border-radius: 6px;
-            padding: 8px 16px;
-            font-weight: 500;
-            font-size: 10pt;
+            border-radius: {m.radius_md};
+            padding: {m.spacing_md} {m.spacing_xl};
+            font-weight: {m.font_weight_medium};
+            font-size: {m.font_size_base};
         }}
         QPushButton:hover {{
             background: {c.hover_bg};
@@ -455,14 +698,17 @@ class Theme:
             background: {c.accent_subtle};
             border: 1px solid {c.accent};
             color: {c.accent};
-        }}
+        }}"""
 
+    @staticmethod
+    def _primary_button_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* Primary action buttons */
         QPushButton#primaryButton {{
             background: {c.accent};
             color: {c.accent_text};
             border: 1px solid {c.accent};
-            font-weight: 600;
+            font-weight: {m.font_weight_semibold};
         }}
         QPushButton#primaryButton:hover {{
             background: {c.accent_hover};
@@ -471,17 +717,22 @@ class Theme:
         QPushButton#primaryButton:pressed {{
             background: {c.text_primary};
             border: 1px solid {c.text_primary};
-        }}
+        }}"""
 
+    # -- Tool buttons --
+
+    @staticmethod
+    def _tool_button_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Tool buttons (expand toggles) ---- */
         QToolButton {{
             background: transparent;
             color: {c.text_secondary};
             border: 1px solid transparent;
             border-radius: 0;
-            font-weight: 600;
-            font-size: 9pt;
-            padding: 6px 10px;
+            font-weight: {m.font_weight_semibold};
+            font-size: {m.font_size_sm};
+            padding: {m.spacing_sm} 10px;
         }}
         QToolButton:hover {{
             background: {c.hover_bg};
@@ -492,22 +743,27 @@ class Theme:
             color: {c.accent};
             background: {c.accent_subtle};
             border: 1px solid {c.accent};
-        }}
+        }}"""
 
+    # -- Menus / category list --
+
+    @staticmethod
+    def _menu_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Menus / category list ---- */
         QMenuBar {{
             background: {c.panel_bg};
             color: {c.text_primary};
             border: none;
             border-bottom: 1px solid {c.border};
-            padding: 2px;
+            padding: {m.spacing_xxs};
         }}
         QMenu {{
             background: {c.panel_bg};
             color: {c.text_primary};
             border: 1px solid {c.border};
             border-radius: 0;
-            padding: 4px;
+            padding: {m.spacing_xs};
         }}
         QMenuBar::item:selected {{
             background: {c.accent_subtle};
@@ -525,33 +781,43 @@ class Theme:
             border: none;
             border-right: 1px solid {c.border};
             outline: none;
-            padding: 8px 4px;
+            padding: {m.spacing_md} {m.spacing_xs};
         }}
         QListWidget#settingsCategoryList::item {{
-            padding: 10px 12px;
-            border-radius: 6px;
-            margin: 1px 4px;
-            font-weight: 500;
-            font-size: 10pt;
+            padding: {m.spacing_md} {m.spacing_lg};
+            border-radius: {m.radius_md};
+            margin: 1px {m.spacing_xs};
+            font-weight: {m.font_weight_medium};
+            font-size: {m.font_size_base};
         }}
         QListWidget#settingsCategoryList::item:selected {{
             background: {c.accent_subtle};
             color: {c.accent};
-            font-weight: 600;
+            font-weight: {m.font_weight_semibold};
         }}
         QListWidget#settingsCategoryList::item:hover:!selected {{
             background: {c.hover_bg};
-        }}
+        }}"""
 
+    # -- Status bar --
+
+    @staticmethod
+    def _statusbar_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Status bar ---- */
         QStatusBar {{
             background: {c.sidebar_bg};
             color: {c.text_secondary};
             border-top: 1px solid {c.border};
-            font-size: 9pt;
-            padding: 2px 8px;
-        }}
+            font-size: {m.font_size_sm};
+            padding: {m.spacing_xxs} {m.spacing_md};
+        }}"""
 
+    # -- Splitter --
+
+    @staticmethod
+    def _splitter_styles(c: _Palette, m: _Metrics) -> str:  # noqa: ARG004
+        return f"""
         /* ---- Splitter ---- */
         QSplitter::handle {{
             background: {c.splitter};
@@ -560,45 +826,60 @@ class Theme:
         }}
         QSplitter::handle:hover {{
             background: {c.accent};
-        }}
+        }}"""
 
+    # -- Checkbox --
+
+    @staticmethod
+    def _checkbox_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Checkbox ---- */
         QCheckBox {{
             color: {c.text_primary};
-            font-size: 9pt;
-            spacing: 8px;
+            font-size: {m.font_size_sm};
+            spacing: {m.spacing_md};
         }}
         QCheckBox::indicator {{
-            width: 16px;
-            height: 16px;
-            border: 2px solid {c.border};
-            border-radius: 4px;
+            width: {m.spacing_xl};
+            height: {m.spacing_xl};
+            border: {m.spacing_xxs} solid {c.border};
+            border-radius: {m.radius_sm};
             background: {c.input_bg};
         }}
         QCheckBox::indicator:hover {{
-            border: 2px solid {c.accent};
+            border: {m.spacing_xxs} solid {c.accent};
         }}
         QCheckBox::indicator:checked {{
             background: {c.accent};
-            border: 2px solid {c.accent};
+            border: {m.spacing_xxs} solid {c.accent};
             image: none;
-        }}
+        }}"""
 
+    # -- Scroll area --
+
+    @staticmethod
+    def _scrollarea_styles(c: _Palette, m: _Metrics) -> str:  # noqa: ARG004
+        return """
         /* ---- Scroll area ---- */
-        QScrollArea {{
+        QScrollArea {
             border: none;
             background: transparent;
-        }}
+        }"""
 
+    # -- Scrollbar --
+
+    @staticmethod
+    def _scrollbar_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Scrollbar ---- */
         QScrollBar:vertical {{
             background: transparent;
-            width: 8px;
+            width: {m.spacing_md};
             margin: 0;
         }}
         QScrollBar::handle:vertical {{
             background: {c.border};
-            border-radius: 4px;
+            border-radius: {m.radius_sm};
             min-height: 30px;
         }}
         QScrollBar::handle:vertical:hover {{
@@ -613,12 +894,12 @@ class Theme:
 
         QScrollBar:horizontal {{
             background: transparent;
-            height: 8px;
+            height: {m.spacing_md};
             margin: 0;
         }}
         QScrollBar::handle:horizontal {{
             background: {c.border};
-            border-radius: 4px;
+            border-radius: {m.radius_sm};
             min-width: 30px;
         }}
         QScrollBar::handle:horizontal:hover {{
@@ -629,8 +910,13 @@ class Theme:
         }}
         QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
             background: none;
-        }}
+        }}"""
 
+    # -- Tab bar --
+
+    @staticmethod
+    def _tab_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Tab bar (QTabBar in QTabWidget) ---- */
         QTabWidget::pane {{
             border: 1px solid {c.border};
@@ -641,40 +927,55 @@ class Theme:
             background: transparent;
             color: {c.text_secondary};
             border: none;
-            border-bottom: 2px solid transparent;
-            padding: 8px 16px;
-            font-weight: 500;
-            font-size: 10pt;
+            border-bottom: {m.spacing_xxs} solid transparent;
+            padding: {m.spacing_md} {m.spacing_xl};
+            font-weight: {m.font_weight_medium};
+            font-size: {m.font_size_base};
         }}
         QTabBar::tab:selected {{
             color: {c.accent};
-            border-bottom: 2px solid {c.accent};
+            border-bottom: {m.spacing_xxs} solid {c.accent};
         }}
         QTabBar::tab:hover:!selected {{
             color: {c.text_primary};
-            border-bottom: 2px solid {c.border};
-        }}
+            border-bottom: {m.spacing_xxs} solid {c.border};
+        }}"""
 
+    # -- ToolTip --
+
+    @staticmethod
+    def _tooltip_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- ToolTip ---- */
         QToolTip {{
             background: {c.panel_bg};
             color: {c.text_primary};
             border: 1px solid {c.border};
             border-radius: 0;
-            padding: 6px 10px;
-            font-size: 9pt;
-        }}
+            padding: {m.spacing_sm} 10px;
+            font-size: {m.font_size_sm};
+        }}"""
 
+    # -- MessageBox --
+
+    @staticmethod
+    def _messagebox_styles(c: _Palette, m: _Metrics) -> str:  # noqa: ARG004
+        return f"""
         /* ---- MessageBox ---- */
         QMessageBox {{
             background: {c.panel_bg};
-        }}
+        }}"""
 
+    # -- Card container --
+
+    @staticmethod
+    def _card_container_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Card container ---- */
         QFrame#modelProviderCard {{
             background: {c.input_bg};
             border: 1px solid {c.border};
-            border-radius: 6px;
+            border-radius: {m.radius_md};
         }}
         QFrame#modelProviderCard:hover {{
             border: 1px solid {c.accent};
@@ -693,51 +994,61 @@ class Theme:
         QFrame#modelProviderCard[server_enabled="false"],
         QFrame#modelProviderCard[skill_enabled="false"] {{
             border-left: 3px solid {c.border};
-        }}
+        }}"""
 
+    # -- Card badges --
+
+    @staticmethod
+    def _card_badge_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Card badges (pill tags) ---- */
         QLabel#cardBadgeEnabled {{
             color: {c.status_ok};
-            font-size: 8pt;
-            font-weight: 600;
-            padding: 2px 8px;
-            border-radius: 10px;
+            font-size: {m.font_size_xs};
+            font-weight: {m.font_weight_semibold};
+            padding: {m.spacing_xxs} {m.spacing_md};
+            border-radius: {m.radius_pill};
             background: {c.status_ok}18;
         }}
         QLabel#cardBadgeDisabled {{
             color: {c.status_unknown};
-            font-size: 8pt;
-            font-weight: 600;
-            padding: 2px 8px;
-            border-radius: 10px;
+            font-size: {m.font_size_xs};
+            font-weight: {m.font_weight_semibold};
+            padding: {m.spacing_xxs} {m.spacing_md};
+            border-radius: {m.radius_pill};
             background: {c.status_unknown}18;
         }}
         QLabel#cardBadgeTransport {{
             color: {c.accent};
-            font-size: 8pt;
-            font-weight: 600;
-            padding: 2px 8px;
-            border-radius: 10px;
+            font-size: {m.font_size_xs};
+            font-weight: {m.font_weight_semibold};
+            padding: {m.spacing_xxs} {m.spacing_md};
+            border-radius: {m.radius_pill};
             background: {c.accent}18;
         }}
         QLabel#cardBadgeVersion {{
             color: {c.text_secondary};
-            font-size: 8pt;
-            font-weight: 500;
-            padding: 2px 8px;
-            border-radius: 10px;
+            font-size: {m.font_size_xs};
+            font-weight: {m.font_weight_medium};
+            padding: {m.spacing_xxs} {m.spacing_md};
+            border-radius: {m.radius_pill};
             background: {c.border_light};
-        }}
+        }}"""
 
+    # -- Card toggle button --
+
+    @staticmethod
+    def _card_toggle_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Card toggle button ---- */
         QPushButton#cardToggleButton {{
             background: {c.accent};
             color: {c.accent_text};
             border: 1px solid {c.accent};
-            border-radius: 4px;
-            padding: 2px 12px;
-            font-size: 8pt;
-            font-weight: 600;
+            border-radius: {m.radius_sm};
+            padding: {m.spacing_xxs} {m.spacing_lg};
+            font-size: {m.font_size_xs};
+            font-weight: {m.font_weight_semibold};
         }}
         QPushButton#cardToggleButton:hover {{
             background: {c.accent_hover};
@@ -751,43 +1062,63 @@ class Theme:
         QPushButton#cardToggleButton[active="false"]:hover {{
             background: {c.hover_bg};
             border: 1px solid {c.text_secondary};
-        }}
+        }}"""
 
+    # -- Card edit button --
+
+    @staticmethod
+    def _card_edit_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Card edit button ---- */
         QPushButton#modelCardEditButton {{
             background: transparent;
             color: {c.text_secondary};
             border: 1px solid {c.border};
-            border-radius: 4px;
-            padding: 2px 10px;
-            font-size: 9pt;
+            border-radius: {m.radius_sm};
+            padding: {m.spacing_xxs} 10px;
+            font-size: {m.font_size_sm};
         }}
         QPushButton#modelCardEditButton:hover {{
             background: {c.hover_bg};
             color: {c.text_primary};
             border: 1px solid {c.text_secondary};
-        }}
+        }}"""
 
+    # -- Danger button --
+
+    @staticmethod
+    def _danger_button_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Danger button (theme-aware) ---- */
         QPushButton#dangerButton {{
             background: transparent;
             color: {c.status_error};
             border: 1px solid transparent;
-            border-radius: 4px;
-            padding: 2px 8px;
-            font-size: 9pt;
+            border-radius: {m.radius_sm};
+            padding: {m.spacing_xxs} {m.spacing_md};
+            font-size: {m.font_size_sm};
         }}
         QPushButton#dangerButton:hover {{
             background: {c.status_error}1a;
             border: 1px solid {c.status_error};
-        }}
+        }}"""
 
+    # -- Card detail separator --
+
+    @staticmethod
+    def _card_separator_styles(c: _Palette, m: _Metrics) -> str:  # noqa: ARG004
+        return f"""
         /* ---- Card detail separator ---- */
         QFrame#cardSeparator {{
             background: {c.border_light};
             max-height: 1px;
-        }}
+        }}"""
 
+    # -- Model provider / MCP server dialog --
+
+    @staticmethod
+    def _dialog_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Model provider / MCP server dialog ---- */
         QDialog#modelProviderDialog,
         QDialog#mcpServerDialog {{
@@ -795,76 +1126,196 @@ class Theme:
         }}
         QLabel#dialogSectionTitle {{
             color: {c.text_primary};
-            font-size: 10pt;
-            font-weight: 700;
-            padding-top: 8px;
+            font-size: {m.font_size_base};
+            font-weight: {m.font_weight_bold};
+            padding-top: {m.spacing_md};
         }}
         QFrame#dialogSeparator {{
             background: {c.border_light};
             max-height: 1px;
-        }}
+        }}"""
 
+    # -- Chat layout --
+
+    @staticmethod
+    def _chat_layout_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         /* ---- Chat page ---- */
         QFrame#chatComposerContainer {{
             background: {c.input_bg};
             border: 1px solid {c.border};
-            border-radius: 16px;
+            border-radius: {m.radius_sm};
         }}
-        QFrame#chatBubbleUser {{
-            background: {c.accent};
-            color: {c.accent_text};
-            border-radius: 12px;
+        QScrollArea#chatScrollArea {{
+            background: {c.panel_bg};
             border: none;
-            margin-left: 48px;
         }}
-        QFrame#chatBubbleAssistant {{
-            background: {c.input_bg};
+        QFrame#chatTurnDivider {{
+            background: {c.border_light};
+            margin-left: {m.spacing_4xl};
+            margin-right: {m.spacing_4xl};
+            margin-top: {m.spacing_md};
+            margin-bottom: {m.spacing_md};
+        }}
+        QFrame#chatMessageBlock {{
+            background: transparent;
+            border: none;
+        }}"""
+
+    # -- Chat role labels --
+
+    @staticmethod
+    def _chat_role_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        QLabel#chatRoleUser {{
+            color: {c.accent};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
+            padding: 0px;
+        }}
+        QLabel#chatRoleAssistant {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
+            padding: 0px;
+        }}
+        QLabel#chatMessageText {{
             color: {c.text_primary};
-            border-radius: 12px;
-            border: 1px solid {c.border_light};
-            margin-right: 48px;
+            font-size: {m.font_size_base};
+            line-height: {m.line_height_normal};
+        }}"""
+
+    # -- Chat thinking indicator --
+
+    @staticmethod
+    def _chat_thinking_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        QWidget#chatThinkingIndicator {{
+            background: transparent;
         }}
-        QLabel#chatBubbleText {{
-            font-size: 10pt;
-        }}
+        QLabel#chatThinkingDot {{
+            color: {c.accent};
+            font-size: {m.spacing_2xl};
+            font-weight: bold;
+        }}"""
+
+    # -- Tool trace card (legacy) --
+
+    @staticmethod
+    def _tool_trace_card_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         QFrame#toolTraceCard {{
             background: {c.border_light};
             border: 1px solid {c.border};
-            border-radius: 8px;
-            margin-left: 24px;
-            margin-right: 24px;
+            border-radius: {m.radius_lg};
+            margin-left: {m.spacing_4xl};
+            margin-right: {m.spacing_4xl};
         }}
         QLabel#toolTraceTool {{
             color: {c.text_secondary};
-            font-size: 9pt;
-            font-weight: 600;
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
         }}
         QLabel#toolTraceStatus {{
             color: {c.text_secondary};
-            font-size: 8pt;
+            font-size: {m.font_size_xs};
+        }}"""
+
+    # -- Tool call card --
+
+    @staticmethod
+    def _tool_call_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Tool call card ---- */
+        QFrame#toolCallCard {{
+            background: {c.border_light};
+            border: 1px solid {c.border};
+            border-radius: {m.radius_lg};
+            margin-left: {m.spacing_4xl};
+            margin-right: {m.spacing_4xl};
         }}
+        QFrame#toolCallCard:hover {{
+            border-color: {c.accent};
+        }}
+        QToolButton#toolCallToggle {{
+            background: transparent;
+            border: none;
+            padding: {m.spacing_xxs};
+        }}
+        QToolButton#toolCallToggle:hover {{
+            background: {c.hover_bg};
+            border-radius: {m.radius_xs};
+        }}
+        QLabel#toolCallIcon {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_base};
+        }}
+        QLabel#toolCallName {{
+            color: {c.text_primary};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
+        }}
+        QLabel#toolCallStatus {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+        }}
+        QLabel#toolCallSummary {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+            padding-left: 22px;
+        }}
+        QWidget#toolCallDetailPanel {{
+            background: transparent;
+        }}
+        QLabel#toolCallSectionLabel {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+            font-weight: {m.font_weight_semibold};
+            text-transform: uppercase;
+        }}
+        QTextBrowser#toolCallContent {{
+            background: {c.sidebar_bg};
+            color: {c.text_primary};
+            border: 1px solid {c.border};
+            border-radius: {m.radius_sm};
+            font-family: {m.mono_family};
+            font-size: {m.font_size_sm};
+            padding: {m.spacing_xs} {m.spacing_sm};
+        }}"""
+
+    # -- Chat input --
+
+    @staticmethod
+    def _chat_input_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         QTextEdit#chatInput {{
             background: transparent;
             color: {c.text_primary};
             border: none;
-            border-radius: 12px;
-            padding: 6px 8px;
-            font-size: 10pt;
+            border-radius: {m.radius_sm};
+            padding: {m.spacing_sm} {m.spacing_md};
+            font-size: {m.font_size_base};
         }}
         QTextEdit#chatInput:focus {{
             background: transparent;
         }}
         QTextEdit#chatInput:disabled {{
             color: {c.text_secondary};
-        }}
+        }}"""
+
+    # -- Chat action buttons --
+
+    @staticmethod
+    def _chat_button_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         QPushButton#chatModelButton {{
             background: transparent;
             color: {c.text_secondary};
             border: none;
-            border-radius: 12px;
-            padding: 4px 12px;
-            font-size: 9pt;
-            font-weight: 500;
+            border-radius: {m.radius_xl};
+            padding: {m.spacing_xs} {m.spacing_lg};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_medium};
             text-align: left;
         }}
         QPushButton#chatModelButton:hover {{
@@ -875,8 +1326,8 @@ class Theme:
             background: {c.accent};
             color: {c.accent_text};
             border: none;
-            border-radius: 16px;
-            font-size: 14pt;
+            border-radius: {m.radius_round};
+            font-size: {m.font_size_lg};
             font-weight: bold;
             padding: 0px;
         }}
@@ -887,15 +1338,45 @@ class Theme:
             background: {c.border_light};
             color: {c.text_secondary};
         }}
+        QPushButton#chatStopRoundButton {{
+            background: {c.status_error};
+            color: {c.accent_text};
+            border: none;
+            border-radius: {m.radius_round};
+            font-size: {m.font_size_md};
+            font-weight: bold;
+            padding: 0px;
+        }}
+        QPushButton#chatStopRoundButton:hover {{
+            background: {c.status_error};
+        }}
+        QPushButton#chatClearButton {{
+            background: transparent;
+            color: {c.text_secondary};
+            border: none;
+            border-radius: 14px;
+            font-size: 13pt;
+            padding: 0px;
+        }}
+        QPushButton#chatClearButton:hover {{
+            background: {c.hover_bg};
+            color: {c.text_primary};
+        }}"""
+
+    # -- Chat model menu --
+
+    @staticmethod
+    def _chat_menu_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
         QMenu#chatModelMenu {{
             background: {c.panel_bg};
             border: 1px solid {c.border};
-            border-radius: 8px;
-            padding: 4px;
+            border-radius: {m.radius_lg};
+            padding: {m.spacing_xs};
         }}
         QMenu#chatModelMenu::item {{
-            padding: 6px 20px;
-            border-radius: 4px;
+            padding: {m.spacing_sm} 20px;
+            border-radius: {m.radius_sm};
             color: {c.text_primary};
         }}
         QMenu#chatModelMenu::item:selected {{
@@ -905,16 +1386,275 @@ class Theme:
         QMenu#chatModelMenu::item:checked {{
             background: {c.accent_subtle};
             color: {c.accent};
-            font-weight: 600;
+            font-weight: {m.font_weight_semibold};
         }}
         QMenu#chatModelMenu::indicator {{
-            width: 8px;
-            height: 8px;
-            border-radius: 4px;
+            width: {m.spacing_md};
+            height: {m.spacing_md};
+            border-radius: {m.radius_sm};
             background: {c.accent};
-            margin-left: 4px;
+            margin-left: {m.spacing_xs};
+        }}"""
+
+    # -- Session sidebar --
+
+    @staticmethod
+    def _session_sidebar_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Session sidebar ---- */
+        QFrame#sessionSidebar {{
+            background: {c.sidebar_bg};
+            border: none;
+            border-right: 1px solid {c.border};
         }}
-        """
+        QFrame#sessionSidebarHeader {{
+            background: {c.sidebar_bg};
+            border: none;
+            border-bottom: 1px solid {c.border_light};
+        }}
+        QLabel#sessionSidebarTitle {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
+            letter-spacing: {m.letter_spacing_normal};
+        }}
+        QPushButton#sessionNewButton {{
+            background: transparent;
+            color: {c.text_primary};
+            border: 1px solid {c.border};
+            border-radius: {m.radius_xl};
+            font-size: {m.font_size_lg};
+            font-weight: bold;
+            padding: 0px;
+        }}
+        QPushButton#sessionNewButton:hover {{
+            background: {c.accent_subtle};
+            color: {c.accent};
+            border: 1px solid {c.accent};
+        }}
+        QFrame#sessionItem {{
+            background: transparent;
+            border: none;
+            border-radius: {m.radius_md};
+        }}
+        QFrame#sessionItem:hover {{
+            background: {c.hover_bg};
+        }}
+        QFrame#sessionItem[active="true"] {{
+            background: {c.accent_subtle};
+        }}
+        QLabel#sessionItemTitle {{
+            color: {c.text_primary};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
+        }}
+        QLabel#sessionItemMeta {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+        }}
+        QPushButton#sessionDeleteButton {{
+            background: transparent;
+            color: {c.text_secondary};
+            border: none;
+            border-radius: 9px;
+            font-size: {m.font_size_md};
+            font-weight: bold;
+            padding: 0px;
+        }}
+        QPushButton#sessionDeleteButton:hover {{
+            background: {c.status_error}1a;
+            color: {c.status_error};
+        }}"""
+
+    # -- Skill card --
+
+    @staticmethod
+    def _skill_card_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Skill card (settings) ---- */
+        QFrame#skillCard {{
+            background: {c.input_bg};
+            border: 1px solid {c.border};
+            border-radius: {m.radius_md};
+        }}
+        QFrame#skillCard:hover {{
+            border: 1px solid {c.accent};
+        }}"""
+
+    # -- Chat skill/provider selectors --
+
+    @staticmethod
+    def _chat_skill_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Chat skill/provider selectors ---- */
+        QPushButton#chatSkillButton {{
+            background: transparent;
+            color: {c.text_secondary};
+            border: none;
+            border-radius: {m.radius_xl};
+            padding: {m.spacing_xs} {m.spacing_lg};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_medium};
+            text-align: left;
+        }}
+        QPushButton#chatSkillButton:hover {{
+            background: {c.accent_subtle};
+            color: {c.accent};
+        }}"""
+
+    # -- Chat markdown content --
+
+    @staticmethod
+    def _chat_markdown_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Chat markdown content ---- */
+        QTextBrowser#chatMarkdownContent {{
+            background: transparent;
+            color: {c.text_primary};
+            border: none;
+            font-size: {m.font_size_base};
+        }}"""
+
+    # -- Tool trace panel --
+
+    @staticmethod
+    def _tool_trace_panel_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Tool trace panel ---- */
+        QWidget#toolTracePanel {{
+            background: {c.panel_bg};
+            border: none;
+            border-left: 1px solid {c.border};
+        }}
+        QFrame#tracePanelHeader {{
+            background: {c.header_bg};
+            border: none;
+            border-bottom: 1px solid {c.border_light};
+        }}
+        QLabel#tracePanelTitle {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
+        }}
+        QLabel#tracePanelCount {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+        }}
+        QFrame#traceEntry {{
+            background: {c.input_bg};
+            border: 1px solid {c.border};
+            border-radius: {m.radius_md};
+        }}
+        QLabel#traceIcon {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_sm};
+        }}
+        QLabel#traceToolName {{
+            color: {c.text_primary};
+            font-size: {m.font_size_sm};
+            font-weight: {m.font_weight_semibold};
+        }}
+        QLabel#traceStatus {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+        }}
+        QLabel#traceArgs {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+            font-family: {m.mono_family};
+        }}
+        QLabel#traceSummary {{
+            color: {c.text_secondary};
+            font-size: {m.font_size_xs};
+        }}"""
+
+    # -- Settings advanced toggle --
+
+    @staticmethod
+    def _advanced_toggle_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Settings advanced toggle ---- */
+        QToolButton#advancedToggle {{
+            background: transparent;
+            color: {c.text_secondary};
+            border: none;
+            font-weight: bold;
+            font-size: {m.font_size_sm};
+            padding: {m.spacing_xxs} 0;
+        }}
+        QToolButton#advancedToggle:hover {{
+            color: {c.text_primary};
+        }}"""
+
+    # -- Settings skill prompt edit --
+
+    @staticmethod
+    def _skill_prompt_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Settings skill prompt edit ---- */
+        QTextEdit#skillPromptEdit {{
+            background: {c.input_bg};
+            color: {c.text_primary};
+            border: 1px solid {c.border};
+            border-radius: {m.radius_md};
+            font-size: {m.font_size_sm};
+        }}
+        QTextEdit#skillPromptEdit:focus {{
+            border: 2px solid {c.accent};
+        }}"""
+
+    # -- Scroll area containers inside panels --
+
+    @staticmethod
+    def _scroll_container_styles(c: _Palette, m: _Metrics) -> str:  # noqa: ARG004
+        return f"""
+        /* ---- Scroll area containers inside panels ---- */
+        QWidget#sessionListContainer {{
+            background: {c.sidebar_bg};
+        }}
+        QWidget#traceListContainer {{
+            background: {c.panel_bg};
+        }}
+        QScrollArea#sessionScrollArea,
+        QScrollArea#traceScrollArea {{
+            background: transparent;
+            border: none;
+        }}"""
+
+    # -- Additional menu styles --
+
+    @staticmethod
+    def _provider_menu_styles(c: _Palette, m: _Metrics) -> str:
+        return f"""
+        /* ---- Additional menu styles ---- */
+        QMenu#chatProviderMenu,
+        QMenu#chatSkillMenu {{
+            background: {c.panel_bg};
+            border: 1px solid {c.border};
+            border-radius: {m.radius_lg};
+            padding: {m.spacing_xs};
+        }}
+        QMenu#chatProviderMenu::item,
+        QMenu#chatSkillMenu::item {{
+            padding: {m.spacing_sm} 20px;
+            border-radius: {m.radius_sm};
+            color: {c.text_primary};
+        }}
+        QMenu#chatProviderMenu::item:selected,
+        QMenu#chatSkillMenu::item:selected {{
+            background: {c.accent_subtle};
+            color: {c.accent};
+        }}
+        QMenu#chatProviderMenu::item:checked,
+        QMenu#chatSkillMenu::item:checked {{
+            background: {c.accent_subtle};
+            color: {c.accent};
+            font-weight: {m.font_weight_semibold};
+        }}"""
+
+    # ------------------------------------------------------------------ #
+    # Factory helpers
+    # ------------------------------------------------------------------ #
 
     @classmethod
     def light(cls) -> "Theme":

@@ -2,7 +2,7 @@
 
 **[English](README.md)** | **[中文](README_CN.md)**
 
-<img src="Sarma.png" width="25%">
+<img src="Sarma.png" width="75%">
 
 [![MCP Badge](https://lobehub.com/badge/mcp/captain-ai-hub-ida-mcp)](https://lobehub.com/mcp/captain-ai-hub-ida-mcp)
 

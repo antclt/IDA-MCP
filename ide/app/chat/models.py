@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -75,10 +76,53 @@ class ChatMessage:
 
     def to_langchain_message(self) -> dict[str, Any]:
         """Convert to a langchain-compatible message dict."""
-        return {
-            "role": self.role,
-            "content": self.content,
-        }
+        if self.role == "tool":
+            if self.tool_call_id:
+                message = {
+                    "role": "tool",
+                    "content": self.content,
+                    "tool_call_id": self.tool_call_id,
+                }
+                if self.tool_name:
+                    message["name"] = self.tool_name
+                return message
+            return {
+                "role": "assistant",
+                "content": self._tool_history_fallback_text(),
+            }
+
+        return {"role": self.role, "content": self.content}
+
+    def _tool_history_fallback_text(self) -> str:
+        """Serialize persisted tool history without tool_call_id as plain text.
+
+        Older rows and partial tool traces may not have a valid tool_call_id.
+        Those cannot be reconstructed as protocol-correct ToolMessage objects,
+        so we degrade them into assistant text instead of crashing replay.
+        """
+        tool_label = self.tool_name or "tool"
+        content = self.content or ""
+
+        try:
+            data = json.loads(content)
+        except (TypeError, ValueError):
+            data = None
+
+        if isinstance(data, dict):
+            args = data.get("args")
+            result = data.get("result")
+            parts = [f"Previous tool call: {tool_label}"]
+            if args not in (None, "", {}, []):
+                parts.append(
+                    f"Args: {json.dumps(args, ensure_ascii=False, sort_keys=True)}"
+                )
+            if result not in (None, ""):
+                parts.append(f"Result: {result}")
+            return "\n".join(parts)
+
+        if content:
+            return f"Previous tool call: {tool_label}\nResult: {content}"
+        return f"Previous tool call: {tool_label}"
 
 
 # ---------------------------------------------------------------------------

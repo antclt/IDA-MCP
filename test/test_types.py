@@ -1,24 +1,24 @@
-"""测试 api_types.py 中的工具。
+"""Tests for tools in api_types.py.
 
-测试逻辑：
-1. 测试类型声明
-2. 测试函数原型设置
-3. 测试变量类型设置
-4. 测试结构体列表和详情
+Test logic:
+1. Test type declarations
+2. Test function prototype setting
+3. Test variable type setting
+4. Test struct list and details
 
-Proxy 参数对应：
+Proxy parameter mappings:
 - declare_struct: decl
 - declare_enum: decl
 - declare_typedef: decl
 - set_function_prototype: function_address (str), prototype
 - set_local_variable_type: function_address (str), variable_name, new_type
 - set_global_variable_type: variable_name, new_type
-- list_structs: pattern (可选)
+- list_structs: pattern (optional)
 - get_struct_info: name
 
-运行方式：
-    pytest -m types         # 只运行 types 模块测试
-    pytest test_types.py    # 运行此文件所有测试
+Run with:
+    pytest -m types         # Run only types module tests
+    pytest test_types.py    # Run all tests in this file
 """
 import pytest
 
@@ -28,7 +28,7 @@ pytestmark = pytest.mark.types
 
 
 class TestDeclareTypes:
-    """声明类型测试。"""
+    """Type declaration tests."""
 
     def test_build_temp_variable_decl_supports_array_fragments(self):
         decl = api_types._build_temp_variable_decl("webs_post_rewrite_entry[18]", "__tmp")
@@ -39,7 +39,7 @@ class TestDeclareTypes:
         assert decl == "int * __tmp;"
 
     def test_declare_named_decl_uses_python_parser_only(self, monkeypatch):
-        """默认应优先走 IDAPython parse_decls 路径。"""
+        """By default it should prefer the IDAPython parse_decls path."""
         calls = {"python": 0, "fallback": 0}
 
         class FakeTinfo:
@@ -80,7 +80,7 @@ class TestDeclareTypes:
         assert calls == {"python": 1, "fallback": 0}
 
     def test_declare_struct(self, tool_caller):
-        """测试声明结构体。"""
+        """Test declaring a struct."""
         result = tool_caller("declare_struct", {
             "decl": "struct TestStruct { int field1; char field2; };"
         })
@@ -90,7 +90,7 @@ class TestDeclareTypes:
             assert result.get("kind") == "struct"
 
     def test_declare_typedef(self, tool_caller):
-        """测试声明 typedef。"""
+        """Test declaring a typedef."""
         result = tool_caller("declare_typedef", {
             "decl": "typedef unsigned int UINT32;"
         })
@@ -100,7 +100,7 @@ class TestDeclareTypes:
             assert result.get("kind") == "typedef"
 
     def test_declare_enum(self, tool_caller):
-        """测试声明枚举。"""
+        """Test declaring an enum."""
         result = tool_caller("declare_enum", {
             "decl": "enum TestEnum { VALUE_A = 0, VALUE_B = 1, VALUE_C = 2 };"
         })
@@ -110,7 +110,7 @@ class TestDeclareTypes:
             assert result.get("kind") == "enum"
 
     def test_declare_complex_struct(self, tool_caller):
-        """测试声明复杂结构体。"""
+        """Test declaring a complex struct."""
         result = tool_caller("declare_struct", {
             "decl": """
                 struct ComplexStruct {
@@ -127,21 +127,21 @@ class TestDeclareTypes:
         assert isinstance(result, dict)
 
     def test_declare_invalid(self, tool_caller):
-        """测试无效声明。"""
+        """Test invalid declaration."""
         result = tool_caller("declare_struct", {
             "decl": "invalid syntax here {"
         })
         assert "error" in result
 
     def test_declare_empty(self, tool_caller):
-        """测试空声明。"""
+        """Test empty declaration."""
         result = tool_caller("declare_struct", {
             "decl": ""
         })
         assert "error" in result
 
     def test_declare_struct_rejects_enum_decl(self, tool_caller):
-        """测试结构体工具拒绝枚举声明。"""
+        """Test that declare_struct rejects an enum declaration."""
         result = tool_caller("declare_struct", {
             "decl": "enum WrongKind { VALUE = 1 };"
         })
@@ -149,11 +149,11 @@ class TestDeclareTypes:
 
 
 class TestSetFunctionPrototype:
-    """设置函数原型测试。"""
+    """Function prototype setting tests."""
     
     def test_set_function_prototype(self, tool_caller, first_function_address):
-        """测试设置函数原型。"""
-        # Proxy 参数: function_address (str), prototype
+        """Test setting function prototype."""
+        # Proxy params: function_address (str), prototype
         result = tool_caller("set_function_prototype", {
             "function_address": hex(first_function_address),
             "prototype": "int __cdecl func(int a, int b)"
@@ -163,7 +163,7 @@ class TestSetFunctionPrototype:
         assert isinstance(result, dict)
     
     def test_set_function_prototype_invalid_address(self, tool_caller):
-        """测试无效地址。"""
+        """Test invalid address."""
         result = tool_caller("set_function_prototype", {
             "function_address": hex(0xDEADBEEF),
             "prototype": "int func(void)"
@@ -171,7 +171,7 @@ class TestSetFunctionPrototype:
         assert "error" in result
     
     def test_set_function_prototype_empty(self, tool_caller, first_function_address):
-        """测试空原型。"""
+        """Test empty prototype."""
         result = tool_caller("set_function_prototype", {
             "function_address": hex(first_function_address),
             "prototype": ""
@@ -179,7 +179,7 @@ class TestSetFunctionPrototype:
         assert "error" in result
     
     def test_set_function_prototype_invalid_syntax(self, tool_caller, first_function_address):
-        """测试无效原型语法。"""
+        """Test invalid prototype syntax."""
         result = tool_caller("set_function_prototype", {
             "function_address": hex(first_function_address),
             "prototype": "invalid prototype syntax"
@@ -188,11 +188,11 @@ class TestSetFunctionPrototype:
 
 
 class TestSetLocalVariableType:
-    """设置局部变量类型测试。"""
+    """Local variable type setting tests."""
     
     def test_set_local_variable_type(self, tool_caller, first_function_address):
-        """测试设置局部变量类型。"""
-        # Proxy 参数: function_address (str), variable_name, new_type
+        """Test setting local variable type."""
+        # Proxy params: function_address (str), variable_name, new_type
         result = tool_caller("set_local_variable_type", {
             "function_address": hex(first_function_address),
             "variable_name": "v1",
@@ -203,7 +203,7 @@ class TestSetLocalVariableType:
         assert isinstance(result, dict)
     
     def test_set_local_variable_type_pointer(self, tool_caller, first_function_address):
-        """测试设置指针类型。"""
+        """Test setting pointer type."""
         result = tool_caller("set_local_variable_type", {
             "function_address": hex(first_function_address),
             "variable_name": "v1",
@@ -214,11 +214,11 @@ class TestSetLocalVariableType:
 
 
 class TestSetGlobalVariableType:
-    """设置全局变量类型测试。"""
+    """Global variable type setting tests."""
     
     def test_set_global_variable_type(self, tool_caller, first_global):
-        """测试设置全局变量类型。"""
-        # API 参数: variable_name, new_type
+        """Test setting global variable type."""
+        # API params: variable_name, new_type
         result = tool_caller("set_global_variable_type", {
             "variable_name": first_global["name"],
             "new_type": "int"
@@ -228,7 +228,7 @@ class TestSetGlobalVariableType:
         assert isinstance(result, dict)
     
     def test_set_global_variable_type_not_found(self, tool_caller):
-        """测试不存在的全局变量。"""
+        """Test nonexistent global variable."""
         result = tool_caller("set_global_variable_type", {
             "variable_name": "nonexistent_global_xyz123",
             "new_type": "int"
@@ -236,8 +236,8 @@ class TestSetGlobalVariableType:
         assert "error" in result
     
     def test_set_global_variable_type_struct(self, tool_caller, first_global):
-        """测试设置结构体类型。"""
-        # 先声明结构体
+        """Test setting struct type."""
+        # First declare the struct
         tool_caller("declare_struct", {
             "decl": "struct TestGlobalType { int a; int b; };"
         })
@@ -251,10 +251,10 @@ class TestSetGlobalVariableType:
 
 
 class TestListStructs:
-    """结构体列表测试。"""
+    """Struct list tests."""
 
     def test_list_structs_uses_bounded_ordinal_scan(self, monkeypatch):
-        """默认应按 ordinal 数量遍历，而不是扫描 ordinal limit。"""
+        """By default it should iterate by ordinal count, not scan ordinal limit."""
         class FakeUdt(list):
             def size(self):
                 return len(self)
@@ -315,7 +315,7 @@ class TestListStructs:
         ]
 
     def test_list_structs(self, tool_caller):
-        """测试列出结构体。"""
+        """Test listing structs."""
         result = tool_caller("list_structs")
         assert isinstance(result, dict)
         assert "items" in result
@@ -328,18 +328,18 @@ class TestListStructs:
             assert "members" in s
     
     def test_list_structs_with_pattern(self, tool_caller):
-        """测试按模式过滤结构体。"""
+        """Test filtering structs by pattern."""
         result = tool_caller("list_structs", {"pattern": "test"})
         assert isinstance(result, dict)
         assert "items" in result
 
 
 class TestGetStructInfo:
-    """结构体详情测试。"""
+    """Struct detail tests."""
     
     def test_get_struct_info(self, tool_caller):
-        """测试获取结构体详情。"""
-        # 先创建一个测试结构体
+        """Test getting struct info."""
+        # First create a test struct
         tool_caller("declare_struct", {
             "decl": "struct TestStructInfo { int field1; char field2; void* field3; };"
         })
@@ -353,13 +353,13 @@ class TestGetStructInfo:
             assert isinstance(result["members"], list)
     
     def test_get_struct_info_not_found(self, tool_caller):
-        """测试获取不存在的结构体。"""
+        """Test getting a nonexistent struct."""
         result = tool_caller("get_struct_info", {"name": "__nonexistent_struct_12345__"})
         assert isinstance(result, dict)
         assert "error" in result
     
     def test_get_struct_info_empty_name(self, tool_caller):
-        """测试空名称。"""
+        """Test empty name."""
         result = tool_caller("get_struct_info", {"name": ""})
         assert isinstance(result, dict)
         assert "error" in result

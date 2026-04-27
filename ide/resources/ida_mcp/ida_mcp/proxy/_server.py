@@ -1,9 +1,9 @@
-"""共享的 FastMCP Server 实例。
+"""Shared FastMCP Server instance.
 
-此模块创建一个 FastMCP server 并注册所有工具。
-ida_mcp_proxy.py 和 registry_server.py 都应该导入此模块的 server。
+This module creates a FastMCP server and registers all tools.
+Both ida_mcp_proxy.py and registry_server.py should import the server from this module.
 
-这确保 stdio 和 HTTP 两种传输方式使用完全相同的 server 实例。
+This ensures stdio and HTTP transports use the exact same server instance.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from . import register_tools
 
 
 # ============================================================================
-# FastMCP 服务器（唯一实例）
+# FastMCP server (single instance)
 # ============================================================================
 
 server = FastMCP(
@@ -72,12 +72,12 @@ server = FastMCP(
 
 
 # ============================================================================
-# 核心管理工具
+# Core management tools
 # ============================================================================
 
 @server.tool(description="Health check. Returns {ok: bool, count: int} where count is number of registered IDA instances.")
 def check_connection() -> dict:
-    """检查协调器连接状态。"""
+    """Check coordinator connection status."""
     data = http_get('/instances')
     if not isinstance(data, list):
         return {"ok": False, "count": 0}
@@ -86,7 +86,7 @@ def check_connection() -> dict:
 
 @server.tool(description="List all registered IDA instances. Returns array of {id, port, pid, input_file, started, ...}.")
 def list_instances() -> list:
-    """列出所有已注册的 IDA 实例。"""
+    """List all registered IDA instances."""
     return get_instances()
 
 
@@ -94,7 +94,7 @@ def list_instances() -> list:
 def select_instance(
     port: Annotated[Optional[int], Field(description="Target port; omit for auto-select")] = None
 ) -> dict:
-    """选择推荐目标实例，不写入跨客户端共享状态。"""
+    """Select a recommended target instance without writing cross-client shared state."""
     selected_port = choose_port(port)
     if selected_port is not None:
         return {"selected_port": selected_port}
@@ -109,7 +109,7 @@ def select_instance(
 
 
 # ============================================================================
-# 注册分类工具
+# Register categorized tools
 # ============================================================================
 
 register_tools.register_tools(server)

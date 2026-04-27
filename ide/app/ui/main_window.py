@@ -59,6 +59,7 @@ class MainWindow(QMainWindow):
         self.supervisor_client = supervisor_client or SupervisorClient()
         self._language = self._load_language()
         self._i18n = I18n(self._language)
+        self._theme_mode = self._load_theme_mode()
         self._snapshot: SupervisorSnapshot | None = None
 
         self.resize(1520, 960)
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
 
         # --- child widgets ---
         self._page_stack = QStackedWidget()
+        self._page_stack.setObjectName("pageStack")
         self._activity_bar = QWidget()
         self._activity_items: dict[str, QToolButton] = {}
         self._panel_labels: dict[str, QLabel] = {}
@@ -140,6 +142,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         self.setStatusBar(QStatusBar())
         self._settings_view.language_changed.connect(self._set_language)
+        self._settings_view.theme_changed.connect(self._on_theme_changed)
         self._retranslate_ui()
         self._apply_mode("chat")
         self._apply_theme()
@@ -176,7 +179,9 @@ class MainWindow(QMainWindow):
     def _sidebar_icon_color(self) -> str:
         from app.ui.theme import Theme
 
-        return Theme.light().sidebar_icon_color
+        mode = getattr(self, "_theme_mode", "light")
+        theme = Theme.light() if mode == "light" else Theme.dark()
+        return theme.sidebar_icon_color
 
     def _refresh_sidebar_icons(self) -> None:
         color = self._sidebar_icon_color()
@@ -251,6 +256,7 @@ class MainWindow(QMainWindow):
         controls_layout.addStretch(1)
 
         content = QWidget()
+        content.setObjectName("statusContent")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(10)
@@ -356,6 +362,11 @@ class MainWindow(QMainWindow):
     def _on_snapshot_ready(self, snapshot: SupervisorSnapshot) -> None:
         self._snapshot = snapshot
         self._set_language(snapshot.config.language)
+        # Sync theme from config if changed externally
+        cfg_mode = getattr(snapshot.config, "theme_mode", "light") or "light"
+        if cfg_mode != getattr(self, "_theme_mode", "light"):
+            self._theme_mode = cfg_mode
+            self._apply_theme()
         self._render_snapshot(snapshot)
         self._update_toggle_button(snapshot)
         self.statusBar().showMessage(self._t("main.statusbar.refreshed"), 3000)
@@ -487,9 +498,30 @@ class MainWindow(QMainWindow):
         if self._snapshot is not None:
             self._render_snapshot(self._snapshot)
 
+        # Refresh chat page translations
+        self._chat_page.retranslate()
+
     def _apply_theme(self) -> None:
-        self.setStyleSheet(Theme.light().stylesheet())
+        from app.ui.theme import Theme, ThemeMode
+
+        mode_str = getattr(self, "_theme_mode", None) or "light"
+        mode = ThemeMode.LIGHT if mode_str == "light" else ThemeMode.DARK
+        self._theme_mode = mode_str
+        self.setStyleSheet(Theme(mode).stylesheet())
         self._refresh_sidebar_icons()
+
+    def _on_theme_changed(self, theme_mode: str) -> None:
+        self._theme_mode = theme_mode
+        self._apply_theme()
+
+    def _load_theme_mode(self) -> str:
+        try:
+            from supervisor.api import create_manager
+            manager = create_manager()
+            config = manager.get_ide_config()
+            return getattr(config, "theme_mode", "light") or "light"
+        except Exception:
+            return "light"
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         """Ensure child pages clean up background workers."""

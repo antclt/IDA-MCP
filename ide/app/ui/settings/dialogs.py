@@ -9,9 +9,12 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -443,3 +446,201 @@ class McpServerDialog(QDialog):
             "timeout": self._timeout_spin.value(),
             "enabled": self._enabled_check.isChecked(),
         }
+
+
+class McpServerDetailDialog(QDialog):
+    """Dialog showing MCP server details including available tools.
+
+    Displays server connection info and a table of tools fetched
+    from the MCP server via a background worker.
+    """
+
+    def __init__(
+        self,
+        i18n,
+        *,
+        server=None,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._i18n = i18n
+        self._server = server
+        self._setup_ui()
+
+    def _t(self, key: str, **kwargs: object) -> str:
+        return self._i18n.t(key, **kwargs)
+
+    def _setup_ui(self) -> None:
+        from PySide6.QtCore import Qt
+
+        server = self._server
+        self.setWindowTitle(
+            self._t("settings.mcp.detail.title", name=server.name if server else "")
+        )
+        self.setObjectName("mcpServerDetailDialog")
+        self.setMinimumSize(560, 420)
+        self.resize(640, 520)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        if server is None:
+            layout.addWidget(QLabel("No server data."))
+            return
+
+        # --- Server info section ---
+        info_label = QLabel(self._t("settings.mcp.detail.server_info"))
+        info_label.setObjectName("dialogSectionTitle")
+        layout.addWidget(info_label)
+
+        info_grid = QWidget()
+        info_layout = QVBoxLayout(info_grid)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(4)
+
+        transport_labels = {
+            "stdio": self._t("settings.mcp.transport.stdio"),
+            "http": self._t("settings.mcp.transport.http"),
+            "sse": self._t("settings.mcp.transport.sse"),
+        }
+
+        # Row helper
+        def _info_row(key: str, value: str) -> QWidget:
+            row = QWidget()
+            rl = QVBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(1)
+            kl = QLabel(key)
+            kl.setObjectName("settingsFieldDescription")
+            vl = QLabel(value)
+            vl.setObjectName("settingsFieldLabel")
+            vl.setWordWrap(True)
+            rl.addWidget(kl)
+            rl.addWidget(vl)
+            return row
+
+        enabled_text = self._t("settings.bool.yes") if server.enabled else self._t("settings.bool.no")
+        info_layout.addWidget(_info_row(
+            self._t("settings.field.mcp_server_name"), server.name or "—"
+        ))
+        info_layout.addWidget(_info_row(
+            self._t("settings.field.mcp_transport"),
+            transport_labels.get(server.transport, server.transport)
+        ))
+        info_layout.addWidget(_info_row(
+            self._t("settings.skills.enabled"), enabled_text
+        ))
+
+        if server.transport == "stdio":
+            info_layout.addWidget(_info_row(
+                self._t("settings.field.mcp_command"), server.command or "—"
+            ))
+            try:
+                args_list = json.loads(server.args) if server.args else []
+            except (json.JSONDecodeError, TypeError):
+                args_list = []
+            args_display = " ".join(args_list) if args_list else "—"
+            info_layout.addWidget(_info_row(
+                self._t("settings.field.mcp_args"), args_display
+            ))
+            if server.cwd:
+                info_layout.addWidget(_info_row(
+                    self._t("settings.field.mcp_cwd"), server.cwd
+                ))
+        else:
+            info_layout.addWidget(_info_row(
+                self._t("settings.field.mcp_url"), server.url or "—"
+            ))
+
+        layout.addWidget(info_grid)
+
+        # --- Separator ---
+        sep = QFrame()
+        sep.setObjectName("dialogSeparator")
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        layout.addWidget(sep)
+
+        # --- Tools section ---
+        tools_header = QWidget()
+        tools_header_layout = QVBoxLayout(tools_header)
+        tools_header_layout.setContentsMargins(0, 0, 0, 0)
+        tools_header_layout.setSpacing(4)
+
+        tools_title = QLabel(self._t("settings.mcp.detail.tools"))
+        tools_title.setObjectName("dialogSectionTitle")
+        tools_header_layout.addWidget(tools_title)
+
+        self._tool_count_label = QLabel(
+            self._t("settings.mcp.detail.tools_loading")
+        )
+        self._tool_count_label.setObjectName("settingsFieldDescription")
+        tools_header_layout.addWidget(self._tool_count_label)
+
+        layout.addWidget(tools_header)
+
+        # Tools table
+        self._tools_table = QTableWidget(0, 2)
+        self._tools_table.setObjectName("mcpToolsTable")
+        self._tools_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._tools_table.setSelectionMode(QTableWidget.NoSelection)
+        self._tools_table.verticalHeader().setVisible(False)
+        self._tools_table.setHorizontalHeaderLabels([
+            self._t("settings.mcp.detail.tool_name"),
+            self._t("settings.mcp.detail.tool_description"),
+        ])
+        self._tools_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self._tools_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+        layout.addWidget(self._tools_table, 1)
+
+        # Close button
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        # Start fetching tools
+        self._start_tool_fetch(server)
+
+    def _start_tool_fetch(self, server) -> None:
+        from app.ui.settings.workers import McpToolFetchWorker
+
+        config = server.to_langchain_config()
+        self._fetch_worker = McpToolFetchWorker(
+            server_name=server.name,
+            server_config=config,
+            parent=self,
+        )
+        self._fetch_worker.tools_fetched.connect(self._on_tools_fetched)
+        self._fetch_worker.fetch_failed.connect(self._on_fetch_failed)
+        self._fetch_worker.start()
+
+    def _on_tools_fetched(self, tools: list) -> None:
+        self._tool_count_label.setText(
+            self._t("settings.mcp.detail.tools_count", count=len(tools))
+        )
+        self._tools_table.setRowCount(len(tools))
+        for row_index, tool_info in enumerate(tools):
+            name_item = QTableWidgetItem(tool_info.get("name", ""))
+            desc_item = QTableWidgetItem(tool_info.get("description", ""))
+            desc_item.setToolTip(tool_info.get("description", ""))
+            self._tools_table.setItem(row_index, 0, name_item)
+            self._tools_table.setItem(row_index, 1, desc_item)
+
+    def _on_fetch_failed(self, error: str) -> None:
+        self._tool_count_label.setText(
+            self._t("settings.mcp.detail.tools_error", error=error)
+        )
+        self._tools_table.setRowCount(0)
+
+    def reject(self) -> None:
+        # Clean up worker
+        worker = getattr(self, "_fetch_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+            worker.wait(3000)
+        super().reject()

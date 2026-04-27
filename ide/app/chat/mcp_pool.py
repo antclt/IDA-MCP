@@ -85,11 +85,8 @@ class McpClientPool:
         """Cleanly close all MCP connections."""
         if self._client is not None:
             try:
-                # MultiServerMCPClient may have a close/cleanup method
                 if hasattr(self._client, "close"):
                     await self._client.close()
-                elif hasattr(self._client, "__aexit__"):
-                    await self._client.__aexit__(None, None, None)
             except Exception as exc:
                 logger.warning("Error closing MCP client: %s", exc)
             finally:

@@ -29,13 +29,14 @@ _IDA_MCP_FIELD_ALIASES: dict[str, str] = {
 class SettingsFormState:
     """Flat form state for the settings UI.
 
-    IDE-owned fields (plugin_dir, language, ide_request_timeout)
+    IDE-owned fields (plugin_dir, language, theme_mode, ide_request_timeout)
     are mapped manually.  All IdaMcpConfig fields are included automatically
     via ``from_flat_dict``.
     """
 
     plugin_dir: str
     language: str
+    theme_mode: str
     ide_request_timeout: int
     enable_http: bool
     enable_stdio: bool
@@ -89,6 +90,7 @@ def snapshot_to_form_state(snapshot: SettingsSnapshot) -> SettingsFormState:
     flat: dict[str, Any] = {
         "plugin_dir": ide_config.plugin_dir or "",
         "language": ide_config.language,
+        "theme_mode": getattr(ide_config, "theme_mode", "light") or "light",
         "ide_request_timeout": ide_config.request_timeout,
         **ida_mcp_dict,
     }
@@ -118,6 +120,7 @@ def form_state_to_updates(
         "plugin_dir": _clean_plugin_dir(state.plugin_dir),
         "request_timeout": state.ide_request_timeout,
         "language": state.language,
+        "theme_mode": state.theme_mode,
     }
 
     # Build ida_mcp updates from the form state automatically.

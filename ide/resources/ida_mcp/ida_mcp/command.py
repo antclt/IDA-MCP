@@ -138,6 +138,8 @@ def _cmd_gateway_stop(args: argparse.Namespace) -> int:
         _dump_json(payload)
     else:
         print(payload.get("message", "Gateway shutdown requested"))
+    if "error" in payload and not args.force:
+        print("Tip: use --force to force-kill the gateway process when shutdown fails.")
     return _exit_code_from_payload(payload)
 
 
@@ -282,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_stop.add_argument(
         "--force",
         action="store_true",
-        help="Force stop even if instances are registered",
+        help="Force stop even if instances are registered; force-kill the process when graceful shutdown fails",
     )
     gateway_stop.add_argument(
         "--timeout", type=float, default=None, help="Shutdown timeout in seconds"

@@ -6,11 +6,12 @@ import atexit
 import json
 import ntpath
 import os
-import tempfile
 import shutil
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -94,7 +95,8 @@ def _tail_log_line(path: str | None) -> str | None:
         return None
 
 
-def _spawn_detached(args: List[str], cwd: str, log_path: Optional[str] = None) -> None:
+def _spawn_detached(args: List[str], cwd: str, log_path: Optional[str] = None) -> int:
+    """Spawn a detached child process and return its PID."""
     log_handle = None
     if log_path:
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -114,7 +116,8 @@ def _spawn_detached(args: List[str], cwd: str, log_path: Optional[str] = None) -
     else:
         kwargs["start_new_session"] = True
     try:
-        subprocess.Popen(args, **kwargs)
+        proc = subprocess.Popen(args, **kwargs)
+        return proc.pid
     finally:
         if log_handle is not None:
             log_handle.close()
@@ -261,7 +264,7 @@ def ensure_registry_server(startup_timeout: float = 3.0) -> bool:
             "registry_server",
             python=python_exe,
         )
-        _spawn_detached(
+        gateway_pid = _spawn_detached(
             [
                 python_exe,
                 "-m",
@@ -274,6 +277,7 @@ def ensure_registry_server(startup_timeout: float = 3.0) -> bool:
             cwd=_repo_root(),
             log_path=log_path,
         )
+        _set_launch_status("registry_server", pid=gateway_pid)
 
         if _wait_for_gateway_ready(max(startup_timeout, 8.0)):
             _set_launch_status("registry_server", alive=True, last_error=None)
@@ -563,8 +567,53 @@ def check_connection() -> dict:
     return {"ok": _gateway_ready(), "count": len(instances)}
 
 
+def _kill_process(pid: int) -> bool:
+    """Force-kill a process by PID. Returns True if killed or already dead."""
+    try:
+        if os.name == "nt":
+            result = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=5,
+            )
+            return result.returncode == 0
+        else:
+            os.kill(pid, signal.SIGKILL)
+            return True
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return True
+    except Exception:
+        return False
+
+
+def kill_gateway() -> dict:
+    """Force-kill the gateway process by PID."""
+    pid = _launch_status.get("registry_server", {}).get("pid")
+    if not pid:
+        return {"error": "Gateway PID not available (process not launched by this client)"}
+
+    killed = _kill_process(pid)
+    if killed:
+        _set_launch_status("registry_server", alive=False)
+        # Wait briefly and verify the port is released
+        time.sleep(0.2)
+        return {
+            "status": "ok",
+            "message": "Gateway process killed",
+            "killed": True,
+            "pid": pid,
+        }
+    return {"error": f"Failed to kill gateway process (PID {pid})"}
+
+
 def shutdown_gateway(force: bool = False, timeout: Optional[float] = None) -> dict:
-    """Request a graceful gateway shutdown via the internal control API."""
+    """Request a graceful gateway shutdown via the internal control API.
+
+    When *force* is True and the graceful request fails or times out, the
+    gateway process is force-killed by PID.
+    """
     result = _request_json(
         "POST",
         "/shutdown",
@@ -572,7 +621,15 @@ def shutdown_gateway(force: bool = False, timeout: Optional[float] = None) -> di
         timeout=timeout,
         ensure_server=False,
     )
-    return result if isinstance(result, dict) else {"error": "Gateway unavailable"}
+    result = result if isinstance(result, dict) else {"error": "Gateway unavailable"}
+
+    if "error" in result and force:
+        kill_result = kill_gateway()
+        if "error" not in kill_result:
+            return kill_result
+        result["kill_error"] = kill_result.get("error")
+
+    return result
 
 
 def get_http_proxy_status() -> dict:

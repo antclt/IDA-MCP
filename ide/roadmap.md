@@ -109,12 +109,12 @@ Goal: Basic working chat with a single LLM provider and MCP tool calling.
 
 ### Phase 2 — Complete Experience
 
-- [ ] Tool trace panel
-- [ ] Session sidebar (multi-conversation)
-- [ ] Skill resolver + skill selector
-- [ ] Provider selector
-- [ ] Markdown rendering + code highlighting
-- [ ] Extended SkillEntry model + settings UI for Chat config
+- [x] Tool trace panel
+- [x] Session sidebar (multi-conversation)
+- [x] Skill resolver + skill selector
+- [x] Provider selector
+- [x] Markdown rendering + code highlighting
+- [x] Extended SkillEntry model + settings UI for Chat config
 
 ### Phase 3 — Production Hardening
 

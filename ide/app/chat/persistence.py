@@ -20,6 +20,11 @@ class ChatPersistence:
     def __init__(self, db: DatabaseStore) -> None:
         self._db = db
 
+    @property
+    def db(self) -> DatabaseStore:
+        """Expose the underlying DatabaseStore for read-only queries."""
+        return self._db
+
     # ------------------------------------------------------------------
     # Conversations
     # ------------------------------------------------------------------
@@ -116,6 +121,16 @@ class ChatPersistence:
     def save_messages(self, messages: list[ChatMessage]) -> None:
         for msg in messages:
             self.save_message(msg)
+
+    def update_message_content(self, msg_id: str, content: str) -> bool:
+        """Update the content of a message by its text primary key."""
+        with self._db._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE conversation_messages SET content = ? WHERE id = ?",
+                (content, msg_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
     def load_messages(
         self, conversation_id: str, limit: int = 100

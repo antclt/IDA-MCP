@@ -20,39 +20,39 @@ from ida_mcp.runtime import start_http_proxy_if_gateway
 from ida_mcp.server_factory import create_mcp_server
 
 _server_thread: threading.Thread | None = (
-    None  # 后台 uvicorn 线程 (运行 FastMCP ASGI 服务)
+    None  # background uvicorn thread (runs the FastMCP ASGI service)
 )
-_uv_server = None  # type: ignore               # uvicorn.Server 实例引用, 用于优雅关闭 (should_exit)
+_uv_server = None  # type: ignore               # uvicorn.Server reference, used for graceful shutdown (should_exit)
 _startup_thread: threading.Thread | None = (
-    None  # 启动预检线程 (先确认 gateway 健康, 再启动实例 listener)
+    None  # startup preflight thread (checks gateway health before launching instance listener)
 )
-_startup_stop = threading.Event()  # 启动预检取消信号 (stop_server 中置位)
-_stop_lock = threading.Lock()  # 防止 stop_server 并发重入的互斥锁
-_active_port: int | None = None  # 当前实例实际监听的 MCP 端口 (启动后写入, 停止时清空)
+_startup_stop = threading.Event()  # startup preflight cancellation signal (set in stop_server)
+_stop_lock = threading.Lock()  # mutex to prevent concurrent re-entry into stop_server
+_active_port: int | None = None  # actual MCP listen port of the current instance (set after startup, cleared on stop)
 _hb_thread: threading.Thread | None = (
-    None  # 心跳/保活线程对象 (负责检测协调器状态与定期刷新注册)
+    None  # heartbeat/keepalive thread (monitors coordinator state and periodically refreshes registration)
 )
-_hb_stop = threading.Event()  # 心跳线程停止信号 (stop_server 中置位)
+_hb_stop = threading.Event()  # heartbeat thread stop signal (set in stop_server)
 _tick_thread: threading.Thread | None = None
 _tick_stop_event = threading.Event()
 _last_register_ts: float | None = (
-    None  # 最近一次成功调用 registry.init_and_register 的时间戳 (仅在缺失后重注册时更新)
+    None  # timestamp of the most recent successful registry.init_and_register call (updated only on re-registration after loss)
 )
 _ENABLE_PERIODIC_REFRESH = (
-    False  # 设为 True 才会启用“超时周期刷新”逻辑，默认只在缺失时重注册
+    False  # set to True to enable "timeout periodic refresh" logic; by default only re-register on loss
 )
-_REGISTER_INTERVAL = 300  # (可选) 原本用于周期 refresh 的阈值; 默认禁用
-_HEARTBEAT_INTERVAL = 5  # 心跳循环唤醒/巡检间隔
-_HEARTBEAT_WARN_INTERVAL = 300  # 心跳连续失败时，重复告警的最小间隔
+_REGISTER_INTERVAL = 300  # (optional) original threshold for periodic refresh; disabled by default
+_HEARTBEAT_INTERVAL = 5  # heartbeat loop wake/polling interval
+_HEARTBEAT_WARN_INTERVAL = 300  # minimum interval between repeated heartbeat failure warnings
 _cached_input_file: str | None = (
-    None  # 缓存的输入二进制路径 (仅主线程初始化; 心跳线程避免直接调用 IDA API)
+    None  # cached input binary path (initialized on main thread only; heartbeat thread avoids calling IDA API directly)
 )
 _cached_idb_path: str | None = (
-    None  # 缓存的 IDB 路径 (同上, 避免后台线程访问 IDA C 接口)
+    None  # cached IDB path (same as above; avoid background thread accessing IDA C interface)
 )
-_hb_failure_count = 0  # 连续 heartbeat 重注册失败次数
-_hb_last_failure_sig: str | None = None  # 最近一次 heartbeat 失败签名
-_hb_last_warn_ts = 0.0  # 最近一次 heartbeat 告警时间
+_hb_failure_count = 0  # consecutive heartbeat re-registration failure count
+_hb_last_failure_sig: str | None = None  # most recent heartbeat failure signature
+_hb_last_warn_ts = 0.0  # most recent heartbeat warning timestamp
 _last_main_thread_tick_at: float | None = None
 _MAIN_THREAD_TICK_INTERVAL = 5.0
 
@@ -96,7 +96,7 @@ def start_tick_thread() -> None:
 
 
 def _wait_for_server_start(ready_event: threading.Event, server_obj) -> None:
-    """等待 uvicorn 将 started 标志置为 True。"""
+    """Wait for uvicorn to set the started flag to True."""
     try:
         for _ in range(100):
             if getattr(server_obj, "started", False):
@@ -159,7 +159,7 @@ def _complete_startup_in_background(
         return
     _active_port = port
     start_tick_thread()
-    # 记录注册时间并启动心跳线程
+    # record registration time and start heartbeat thread
     global _hb_thread, _last_register_ts
     _last_register_ts = time.time()
     if _hb_thread is None or not _hb_thread.is_alive():
@@ -172,22 +172,23 @@ def _complete_startup_in_background(
 
 
 def _heartbeat_loop():
-    """后台心跳: 定期确认协调器仍可访问且本实例记录存在, 否则重新注册。
+    """Background heartbeat: periodically verify the coordinator is still reachable and
+    this instance's record exists, otherwise re-register.
 
-    触发条件:
-        * 协调器列表为空 (所有实例丢失) -> 重新注册 (可能重建协调器)
-        * 本实例 pid 未出现在 get_instances() 结果中 -> 重新注册
-        * 正常情况下每 _REGISTER_INTERVAL 秒做一次 refresh (覆盖 started 时间, 保持活跃)
+    Triggers:
+        * coordinator list is empty (all instances lost) -> re-register (may rebuild coordinator)
+        * this instance's pid is absent from get_instances() results -> re-register
+        * under normal conditions, refresh every _REGISTER_INTERVAL seconds (updates started time to stay active)
 
-    设计考量:
-        * registry 当前无心跳超时机制, 但某些情况下协调器线程可能被系统/异常终止。
-        * 使用轻量轮询, 避免对 IDA 主线程的调用; 仅访问 registry (纯网络/内存操作)。
-        * 若服务器已停止 (_active_port 为空) 则直接退出。
+    Design considerations:
+        * registry currently has no heartbeat timeout, but the coordinator thread may be killed by the system or exceptions.
+        * uses lightweight polling to avoid calling the IDA main thread; only accesses registry (pure network/memory operations).
+        * exits immediately if the server has stopped (_active_port is None).
     """
     global _last_register_ts
     pid = os.getpid()
 
-    # 等待服务器初始化完成 (最多 10 秒)
+    # wait for server initialization (up to 10 seconds)
     for _ in range(20):
         if _hb_stop.is_set():
             _info("Heartbeat thread exit (stop signal during startup).")
@@ -197,10 +198,10 @@ def _heartbeat_loop():
         time.sleep(0.5)
 
     while not _hb_stop.is_set():
-        # 若服务已经关闭, 退出
+        # exit if service has already stopped
         if _active_port is None:
             break
-        # 服务器可能在重启中，跳过本轮检查
+        # server may be restarting; skip this round
         if _uv_server is None:
             _hb_stop.wait(_HEARTBEAT_INTERVAL)
             continue
@@ -230,17 +231,17 @@ def _heartbeat_loop():
             found = any(e.get("pid") == pid for e in inst_list)
             if not found:
                 need_register = True
-        # 不再默认进行“时间驱动的强制 refresh”，仅在实例缺失或协调器重建时重注册。
+        # no longer perform "time-driven forced refresh" by default; only re-register when instance is missing or coordinator is rebuilt.
         if (
             not need_register
             and _ENABLE_PERIODIC_REFRESH
             and _last_register_ts
             and (now - _last_register_ts) > _REGISTER_INTERVAL
         ):
-            need_register = True  # 可选：用户显式启用时恢复旧逻辑
+            need_register = True  # optional: restore old logic when user explicitly enables it
         if need_register and _active_port is not None:
             try:
-                # 仅用缓存的路径/文件, 避免后台线程再触碰 IDA API
+                # use only cached paths/files to avoid background thread touching IDA API
                 registry.init_and_register(
                     _active_port, _cached_input_file, _cached_idb_path
                 )
@@ -349,16 +350,16 @@ def _reset_heartbeat_failure_tracking(log_recovery: bool = False) -> None:
 
 
 def _find_free_port(preferred: int, host: str = "127.0.0.1", max_scan: int = 50) -> int:
-    """端口扫描: 从 preferred 起向上尝试绑定, 返回第一个可用端口;
-    若全部失败则返回 preferred (保底)。
+    """Port scan: try binding upward from preferred and return the first free port;
+    if all fail, return preferred as fallback.
 
-    参数:
-        preferred: 起始端口号
-        host: 要绑定的地址（必须与实际监听地址一致）
-        max_scan: 最大扫描次数
+    Args:
+        preferred: starting port number
+        host: address to bind (must match the actual listen address)
+        max_scan: maximum scan attempts
 
-    注意: 默认端口选择 9000 以避开 Windows Hyper-V 保留端口范围 (8709-8808)。
-    不使用 SO_REUSEADDR, 因为在 Windows 上它的行为类似 SO_REUSEPORT。
+    Note: default port starts at 9000 to avoid the Windows Hyper-V reserved port range (8709-8808).
+    Does not use SO_REUSEADDR because on Windows it behaves like SO_REUSEPORT.
     """
     for i in range(max_scan):
         p = preferred + i
@@ -404,13 +405,13 @@ def _ensure_gateway_ready_for_startup() -> bool:
 
 
 def _register_with_coordinator(port: int) -> bool:
-    """向协调器注册当前实例元信息。
+    """Register the current instance metadata with the coordinator.
 
-    参数:
-        port: 当前实例 FastMCP HTTP 监听端口。
-    说明:
-        * 若独立协调器/HTTP proxy 尚未运行，会按需拉起。
-        * 注册内容包括: pid / port / 输入文件路径 / idb 路径 / Python 版本等。
+    Args:
+        port: the current instance's FastMCP HTTP listen port.
+    Notes:
+        * If the standalone coordinator/HTTP proxy is not yet running, it will be launched on demand.
+        * Registration includes: pid / port / input file path / idb path / Python version, etc.
     """
     global _cached_input_file, _cached_idb_path
     if _host_prime_paths:
@@ -471,14 +472,14 @@ def is_running() -> bool:
 
 
 def stop_server():
-    """停止服务器 (切换)。
+    """Stop the server (toggle).
 
-    步骤:
-        1. 设置 ``_uv_server.should_exit`` 触发 uvicorn 事件循环退出。
-        2. join 后台线程 (最多 5 秒)。
-        3. 向独立协调器注销当前实例。
-    并发安全:
-        使用 ``_stop_lock`` 以防多次同时调用。
+    Steps:
+        1. Set ``_uv_server.should_exit`` to trigger uvicorn event loop exit.
+        2. Join background threads (up to 5 seconds).
+        3. Deregister the current instance from the standalone coordinator.
+    Concurrency safety:
+        Uses ``_stop_lock`` to prevent multiple simultaneous calls.
     """
     global _startup_thread, _uv_server, _server_thread
     with _stop_lock:
@@ -513,7 +514,7 @@ def stop_server():
             except Exception as e:  # pragma: no cover
                 _warn(f"Deregister failed: {e}")
         _active_port = None
-        # 停止心跳线程
+        # stop heartbeat thread
         global _hb_thread, _tick_thread, _last_main_thread_tick_at
         if _hb_thread and _hb_thread.is_alive():
             _hb_stop.set()
@@ -537,9 +538,9 @@ def _start_instance_server_threads(host: str, port: int) -> None:
     def worker():
         global _uv_server
         try:
-            # Windows 控制台噪音抑制: 使用 Selector 事件循环替代 Proactor，
-            # 规避 asyncio 在 _ProactorBasePipeTransport._call_connection_lost 中
-            # 打印的 ConnectionResetError(WinError 10054) 回调异常。
+            # Windows console noise suppression: use Selector event loop instead of Proactor,
+            # avoiding the ConnectionResetError(WinError 10054) callback exception printed by
+            # asyncio in _ProactorBasePipeTransport._call_connection_lost.
             if os.name == "nt":
                 try:
                     import asyncio  # type: ignore
@@ -549,14 +550,14 @@ def _start_instance_server_threads(host: str, port: int) -> None:
                             asyncio.WindowsSelectorEventLoopPolicy()
                         )  # type: ignore[attr-defined]
                 except Exception:
-                    pass  # 策略设置失败时不影响后续逻辑，最多产生原有控制台提示
+                    pass  # policy setup failure does not affect subsequent logic; at most produces original console messages
             server = create_mcp_server(
                 name=get_server_name(),
                 enable_unsafe=is_unsafe_enabled(),
             )
-            # 构建 ASGI 应用 (Streamable HTTP), 挂载路径 '/mcp'
+            # build ASGI app (Streamable HTTP), mount path '/mcp'
             app = server.http_app(path="/mcp")  # type: ignore[attr-defined]
-            # 在导入 uvicorn 之前再次确保过滤器生效
+            # re-apply warning filters before importing uvicorn
             import warnings as _w
 
             _w.filterwarnings(
@@ -565,14 +566,14 @@ def _start_instance_server_threads(host: str, port: int) -> None:
             _w.filterwarnings("ignore", category=DeprecationWarning, module=r"uvicorn")
             import uvicorn  # Local import to avoid overhead if never started
 
-            # 使用 warning 日志级别并关闭 access log, 避免输出无意义的 CTRL+C 提示。
+            # use warning log level and disable access log to avoid meaningless CTRL+C messages
             config = uvicorn.Config(
                 app, host=host, port=port, log_level="warning", access_log=False
             )
             _uv_server = uvicorn.Server(config)
-            # 不使用 uvicorn.Server.run()（其内部会创建/管理事件循环），
-            # 我们在此线程内显式创建 loop 并安装异常处理器，以抑制
-            # Windows 下常见的 WinError 10054 “远程主机强迫关闭连接”噪音。
+            # do not use uvicorn.Server.run() (it creates/manages its own event loop);
+            # instead create the loop explicitly in this thread and install an exception handler
+            # to suppress the common Windows WinError 10054 "remote host forcibly closed connection" noise.
             import asyncio
 
             def _exception_handler(loop, context):  # type: ignore[no-untyped-def]
@@ -634,13 +635,13 @@ def _start_instance_server_threads(host: str, port: int) -> None:
 
 
 def start_server_async(host: str, port: int):
-    """异步(线程)启动 uvicorn FastMCP 服务。
+    """Asynchronously (in a thread) start the uvicorn FastMCP service.
 
-    设计要点:
-        * 使用守护线程避免阻塞 IDA 主线程。
-        * 在启动实例 listener 之前, 先确认独立 gateway 已就绪, 避免误导用户认为初始化已完成。
-        * 通过保存 ``_uv_server`` 引用实现优雅关闭 (设置 should_exit)。
-        * 仅在实例 MCP 端口确认监听成功后向协调器注册。
+    Design highlights:
+        * Uses daemon threads to avoid blocking the IDA main thread.
+        * Before launching the instance listener, confirms the standalone gateway is ready to avoid misleading users into thinking initialization is complete.
+        * Achieves graceful shutdown by keeping a ``_uv_server`` reference (set should_exit).
+        * Registers with the coordinator only after the instance MCP port is confirmed listening.
     """
     global _startup_thread
     if is_running():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
@@ -102,6 +103,7 @@ class _ConfigFormBinder:
         data: dict[str, object] = {
             "plugin_dir": page._plugin_dir.text(),
             "language": str(page._language_combo.currentData() or page._language),
+            "theme_mode": str(page._theme_combo.currentData() or "light"),
             "ide_request_timeout": page._ide_request_timeout.value(),
         }
         for field_name, widget_attr, widget_type in self._IDA_FIELD_BINDINGS:
@@ -277,3 +279,57 @@ class _InstallController:
             worker.wait(3000)
         worker.deleteLater()
         self._check_worker = None
+
+
+class McpToolFetchWorker(QThread):
+    """Fetches available tools from an MCP server in a background thread.
+
+    Creates a temporary ``MultiServerMCPClient``, calls ``get_tools()``,
+    and returns a list of ``(name, description)`` tuples via the
+    ``tools_fetched`` signal.  On error, ``fetch_failed`` is emitted with
+    the error message string.
+    """
+
+    tools_fetched = Signal(list)  # list[dict] with keys: name, description
+    fetch_failed = Signal(str)   # error message
+
+    def __init__(
+        self,
+        server_name: str,
+        server_config: dict,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._server_name = server_name
+        self._server_config = server_config
+
+    def run(self) -> None:
+        try:
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+
+            loop = asyncio.new_event_loop()
+            client = None
+            try:
+                client = MultiServerMCPClient(
+                    {self._server_name: self._server_config},
+                    tool_name_prefix=True,
+                )
+                tools = loop.run_until_complete(client.get_tools())
+            finally:
+                # Clean up the client before closing the loop
+                if client is not None and hasattr(client, "close"):
+                    try:
+                        loop.run_until_complete(client.close())
+                    except Exception:
+                        pass
+                loop.close()
+
+            result: list[dict] = []
+            for tool in tools:
+                result.append({
+                    "name": getattr(tool, "name", str(tool)),
+                    "description": getattr(tool, "description", "") or "",
+                })
+            self.tools_fetched.emit(result)
+        except Exception as exc:
+            self.fetch_failed.emit(str(exc))

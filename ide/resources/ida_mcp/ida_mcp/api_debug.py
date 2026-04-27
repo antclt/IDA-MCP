@@ -1,20 +1,20 @@
-"""调试器 API - 调试器控制 (unsafe)。
+"""Debugger API - debugger controls (unsafe).
 
-提供工具:
-    - dbg_regs  获取寄存器
-    - dbg_callstack  获取调用栈
-    - dbg_list_bps  列出断点
-    - dbg_start  启动调试
-    - dbg_exit  退出调试
-    - dbg_continue  继续执行
-    - dbg_run_to  运行到地址
-    - dbg_add_bp  添加断点
-    - dbg_delete_bp  删除断点
-    - dbg_enable_bp  启用/禁用断点
-    - dbg_step_into  单步进入
-    - dbg_step_over  单步跳过
-    - dbg_read_mem  读取调试内存
-    - dbg_write_mem  写入调试内存
+Provides tools:
+    - dbg_regs  get registers
+    - dbg_callstack  get call stack
+    - dbg_list_bps  list breakpoints
+    - dbg_start  start debugger
+    - dbg_exit  exit debugger
+    - dbg_continue  continue execution
+    - dbg_run_to  run to address
+    - dbg_add_bp  add breakpoint
+    - dbg_delete_bp  delete breakpoint
+    - dbg_enable_bp  enable/disable breakpoint
+    - dbg_step_into  step into
+    - dbg_step_over  step over
+    - dbg_read_mem  read debug memory
+    - dbg_write_mem  write debug memory
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from .rpc import tool, unsafe
 from .sync import idaread, idawrite
 from .utils import parse_address, normalize_list_input, hex_addr
 
-# IDA 模块导入
+# IDA module imports
 try:
     import idaapi  # type: ignore
     import ida_funcs  # type: ignore
@@ -53,7 +53,7 @@ def _delete_breakpoint(address: int) -> bool:
     return False
 
 def _wait_for_debugger_event(timeout_ms: int = 1000) -> bool:
-    """等待调试器事件并处理。返回调试器是否处于暂停状态。"""
+    """Wait for debugger events and handle them. Returns whether the debugger is suspended."""
     import time
     
     start = time.time()
@@ -61,16 +61,16 @@ def _wait_for_debugger_event(timeout_ms: int = 1000) -> bool:
     
     while (time.time() - start) < timeout_sec:
         try:
-            # 尝试等待调试器事件
+            # try waiting for a debugger event
             if hasattr(ida_dbg, 'wait_for_next_event'):
-                # 短暂等待事件（10ms）
+                # briefly wait for event (10ms)
                 event = ida_dbg.wait_for_next_event(ida_dbg.WFNE_SUSP, 10)
                 if event:
                     return True
             
-            # 检查调试器状态
+            # check debugger state
             if ida_dbg.is_debugger_on():
-                # 尝试获取一个寄存器来验证调试器真正可用
+                # try reading a register to verify the debugger is actually usable
                 try:
                     rip = ida_dbg.get_reg_val("RIP")
                     if rip is not None:
@@ -89,7 +89,7 @@ def _wait_for_debugger_event(timeout_ms: int = 1000) -> bool:
 
 
 # ============================================================================
-# 寄存器
+# Registers
 # ============================================================================
 
 @unsafe
@@ -107,14 +107,14 @@ def dbg_regs() -> dict:
     names: List[str] = []
     notes: List[str] = []
     
-    # 尝试获取寄存器名称
+    # try to get register names
     try:
         if hasattr(ida_dbg, 'get_dbg_reg_names'):
             names = list(ida_dbg.get_dbg_reg_names())  # type: ignore
     except Exception as e:
         notes.append(f"get_dbg_reg_names: {e}")
     
-    # 如果没有名称，尝试常见的 x64 寄存器
+    # if no names available, fall back to common x64 registers
     if not names:
         names = ["RAX", "RBX", "RCX", "RDX", "RSI", "RDI", "RBP", "RSP", 
                  "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
@@ -151,7 +151,7 @@ def dbg_regs() -> dict:
 
 
 # ============================================================================
-# 调用栈
+# Call stack
 # ============================================================================
 
 @unsafe
@@ -168,7 +168,7 @@ def dbg_callstack() -> dict:
     frames: List[dict] = []
     collected = False
     
-    # 优先使用官方 API
+    # prefer official API
     try:
         if hasattr(ida_dbg, 'get_call_stack'):
             stk = ida_dbg.get_call_stack()  # type: ignore
@@ -194,7 +194,7 @@ def dbg_callstack() -> dict:
     except Exception:
         pass
     
-    # 回退: walk_stack
+    # fallback: walk_stack
     if not collected:
         try:
             if hasattr(ida_dbg, 'walk_stack'):
@@ -229,7 +229,7 @@ def dbg_callstack() -> dict:
 
 
 # ============================================================================
-# 断点
+# Breakpoints
 # ============================================================================
 
 @unsafe
@@ -237,7 +237,7 @@ def dbg_callstack() -> dict:
 @idaread
 def dbg_list_bps() -> dict:
     """List all breakpoints (works without active debugger)."""
-    # 注意：断点可以在调试器不运行时存在，所以不检查 is_debugger_on()
+    # note: breakpoints can exist while the debugger is not running, so skip is_debugger_on() check
     bps: List[dict] = []
     qty = 0
     
@@ -299,7 +299,7 @@ def dbg_list_bps() -> dict:
 
 
 # ============================================================================
-# 调试控制
+# Debug control
 # ============================================================================
 
 @unsafe
@@ -320,7 +320,7 @@ def dbg_start() -> dict:
     if not path:
         return {"error": "cannot determine input file path"}
     
-    # 启动进程
+    # start process
     try:
         started = ida_dbg.start_process(path, '', '')  # type: ignore
     except Exception as e:
@@ -338,7 +338,7 @@ def dbg_start() -> dict:
         except Exception:
             pid = None
         
-        # 等待调试器暂停
+        # wait for debugger to suspend
         suspended = _wait_for_debugger_event(2000)
         
         if not suspended:
@@ -434,7 +434,7 @@ def dbg_run_to(
     used_temp_bpt = False
     notes: List[str] = []
     
-    # 尝试 request_run_to
+    # try request_run_to
     try:
         if hasattr(ida_dbg, 'request_run_to'):
             requested = bool(ida_dbg.request_run_to(address))
@@ -445,7 +445,7 @@ def dbg_run_to(
     except Exception as e:
         notes.append(f'request_run_to error: {e}')
     
-    # 回退: 设置临时断点
+    # fallback: set temporary breakpoint
     if not requested:
         try:
             has_bp = _breakpoint_exists(address)
@@ -465,7 +465,7 @@ def dbg_run_to(
         except Exception:
             notes.append('temp breakpoint fallback failed')
     
-    # 继续执行
+    # continue execution
     continued = False
     suspended = False
     cleaned_temp_bpt = None
@@ -506,7 +506,7 @@ def dbg_run_to(
 
 
 # ============================================================================
-# 断点操作
+# Breakpoint operations
 # ============================================================================
 
 @unsafe
@@ -527,7 +527,7 @@ def dbg_add_bp(
 
 
 def _set_breakpoint_single(query: str) -> dict:
-    """设置单个断点。"""
+    """Set a single breakpoint."""
     parsed = parse_address(query)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "query": query}
@@ -600,7 +600,7 @@ def dbg_delete_bp(
 
 
 def _delete_breakpoint_single(query: str) -> dict:
-    """删除单个断点。"""
+    """Delete a single breakpoint."""
     parsed = parse_address(query)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "query": query}
@@ -671,7 +671,7 @@ def dbg_enable_bp(
 
 
 def _enable_breakpoint_single(address: int, enable: bool) -> dict:
-    """启用/禁用单个断点。"""
+    """Enable or disable a single breakpoint."""
     if int(address) == idaapi.BADADDR:
         return {"error": "BADADDR"}
     
@@ -688,7 +688,7 @@ def _enable_breakpoint_single(address: int, enable: bool) -> dict:
     
     changed = False
     
-    # 若需要启用且不存在 -> 创建
+    # if enabling and breakpoint does not exist -> create it
     if enable and not existed:
         try:
             added = False
@@ -703,7 +703,7 @@ def _enable_breakpoint_single(address: int, enable: bool) -> dict:
         except Exception as e:
             notes.append(f'add_bpt error: {e}')
     
-    # 切换启用状态
+    # toggle enabled state
     if existed:
         try:
             if hasattr(ida_dbg, 'enable_bpt'):
@@ -713,7 +713,7 @@ def _enable_breakpoint_single(address: int, enable: bool) -> dict:
         except Exception as e:
             notes.append(f'enable_bpt error: {e}')
     
-    # 读取最终状态
+    # read final state
     enabled_now = enable if existed else False
     try:
         if hasattr(ida_dbg, 'get_bpt_flags'):
@@ -737,7 +737,7 @@ def _enable_breakpoint_single(address: int, enable: bool) -> dict:
 
 
 # ============================================================================
-# 单步执行
+# Single stepping
 # ============================================================================
 
 @unsafe
@@ -817,7 +817,7 @@ def dbg_step_over() -> dict:
 
 
 # ============================================================================
-# 调试内存操作
+# Debug memory operations
 # ============================================================================
 
 @unsafe

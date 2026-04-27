@@ -1,11 +1,11 @@
-"""修改 API - 注释、重命名、补丁等。
+"""Modification API - comments, renaming, patching, etc.
 
-提供工具:
-    - set_comment          设置注释 (批量)
-    - rename_function      重命名函数
-    - rename_local_variable 重命名局部变量
-    - rename_global_variable 重命名全局变量
-    - patch_bytes          字节补丁
+Provides tools:
+    - set_comment          set comments (batch)
+    - rename_function      rename function
+    - rename_local_variable rename local variable
+    - rename_global_variable rename global variable
+    - patch_bytes          byte patching
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from .strings_cache import invalidate_strings_cache
 from .sync import idaread, idawrite, wait_for_auto_analysis
 from .utils import parse_address, is_valid_c_identifier, normalize_list_input, hex_addr
 
-# IDA 模块导入
+# IDA module imports
 try:
     import idaapi  # type: ignore
     import ida_bytes  # type: ignore
@@ -42,7 +42,7 @@ def _invalidate_strings_cache() -> None:
 
 @contextmanager
 def suppress_ida_warnings():
-    """临时启用 batch 模式以禁用 IDA 的警告弹窗。"""
+    """Temporarily enable batch mode to suppress IDA warning dialogs."""
     old_batch = ida_kernwin.cvar.batch
     ida_kernwin.cvar.batch = 1
     try:
@@ -100,7 +100,7 @@ def set_comment(
 
 
 # ============================================================================
-# 重命名
+# Renaming
 # ============================================================================
 
 @tool
@@ -122,12 +122,12 @@ def rename_function(
     if not is_valid_c_identifier(new_name_clean):
         return {"error": "new_name not a valid C identifier"}
     
-    # 使用 batch 模式包裹整个操作以抑制所有警告消息
+    # wrap the entire operation in batch mode to suppress all warning messages
     with suppress_ida_warnings():
         f = None
         addr = None
         
-        # 方法 1: 尝试作为函数名查找
+        # method 1: try to look up as function name
         if isinstance(address, str):
             try:
                 ea = idaapi.get_name_ea(idaapi.BADADDR, address)
@@ -138,7 +138,7 @@ def rename_function(
             except Exception:
                 pass
         
-        # 方法 2: 尝试作为地址解析
+        # method 2: try to parse as address
         if not f:
             parsed = parse_address(str(address))
             if parsed["ok"] and parsed["value"] is not None:
@@ -162,7 +162,7 @@ def rename_function(
         except Exception:
             old_name = None
         
-        # 如果新旧名称相同，跳过重命名
+        # skip rename if old and new names are identical
         if old_name == new_name_clean:
             return {
                 "start_ea": hex_addr(start_ea),
@@ -173,7 +173,7 @@ def rename_function(
             }
         
         try:
-            # SN_NOWARN | SN_NOCHECK 用于进一步确保无警告
+            # SN_NOWARN | SN_NOCHECK to further ensure no warnings
             flags = idaapi.SN_NOWARN | idaapi.SN_NOCHECK
             ok = idaapi.set_name(start_ea, new_name_clean, flags)
         except Exception as e:
@@ -216,7 +216,7 @@ def rename_local_variable(
     if not is_valid_c_identifier(new_name_clean):
         return {"error": "new_name not a valid C identifier"}
     
-    # 初始化 Hex-Rays
+    # initialize Hex-Rays
     try:
         if not ida_hexrays.init_hexrays_plugin():
             return {"error": "failed to init hex-rays"}
@@ -237,7 +237,7 @@ def rename_local_variable(
     if not cfunc:
         return {"error": "decompile returned None"}
     
-    # 查找变量
+    # find variable
     target = None
     try:
         for lv in cfunc.lvars:  # type: ignore
@@ -253,7 +253,7 @@ def rename_local_variable(
     if not target:
         return {"error": "local variable not found"}
     
-    # 重命名
+    # rename
     try:
         if hasattr(cfunc, "set_user_lvar_name"):
             ok = cfunc.set_user_lvar_name(target, new_name_clean)  # type: ignore[attr-defined]
@@ -306,7 +306,7 @@ def rename_global_variable(
     if ea == idaapi.BADADDR:
         return {"error": "global not found"}
     
-    # 若是函数起始地址则拒绝
+    # reject if target is a function start
     try:
         f = ida_funcs.get_func(ea)
         if f and int(f.start_ea) == int(ea):
@@ -314,7 +314,7 @@ def rename_global_variable(
     except Exception:
         pass
     
-    # 如果新旧名称相同，跳过重命名
+    # skip rename if old and new names are identical
     if old_name == new_name_clean:
         return {
             "ea": hex_addr(ea),
@@ -325,7 +325,7 @@ def rename_global_variable(
         }
     
     try:
-        # 使用 batch 模式完全禁用弹窗
+        # use batch mode to completely disable dialogs
         with suppress_ida_warnings():
             flags = idaapi.SN_NOWARN | idaapi.SN_NOCHECK
             ok = idaapi.set_name(ea, new_name_clean, flags)
@@ -341,7 +341,7 @@ def rename_global_variable(
 
 
 # ============================================================================
-# 字节补丁
+# Byte patching
 # ============================================================================
 
 @tool
@@ -373,18 +373,18 @@ def patch_bytes(
         
         addr_int = parsed["value"]
         
-        # 解析字节数据
+        # parse byte data
         byte_list: List[int] = []
         
         if isinstance(data, list):
-            # 直接是整数列表
+            # direct integer list
             try:
                 byte_list = [int(b) & 0xFF for b in data]
             except (ValueError, TypeError) as e:
                 results.append({"error": f"invalid bytes: {e}", "address": hex_addr(addr_int)})
                 continue
         elif isinstance(data, str):
-            # 十六进制字符串
+            # hex string
             hex_str = data.strip().replace(' ', '')
             if len(hex_str) % 2 != 0:
                 results.append({"error": "hex string length must be even", "address": hex_addr(addr_int)})
@@ -406,7 +406,7 @@ def patch_bytes(
             results.append({"error": "bytes too long (max 1024)", "address": hex_addr(addr_int)})
             continue
         
-        # 读取原始字节
+        # read original bytes
         old_bytes = None
         try:
             old_data = ida_bytes.get_bytes(addr_int, len(byte_list))
@@ -415,7 +415,7 @@ def patch_bytes(
         except Exception:
             pass
         
-        # 写入补丁
+        # write patch
         patched_count = 0
         errors: List[str] = []
         
@@ -427,7 +427,7 @@ def patch_bytes(
                 errors.append(f"offset {i}: {e}")
                 break
         
-        # 读取验证
+        # read back for verification
         new_bytes = None
         try:
             new_data = ida_bytes.get_bytes(addr_int, len(byte_list))

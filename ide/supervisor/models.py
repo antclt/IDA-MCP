@@ -71,6 +71,7 @@ class IdeConfig:
     auto_start_gateway: bool = False
     plugin_dir: str = field(default_factory=_default_ida_plugin_dir)
     language: str = field(default_factory=_default_language)
+    theme_mode: str = "light"  # "light" | "dark"
     notes: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -398,6 +399,12 @@ class SkillEntry:
 
     Skills can be installed from zip packages that are extracted into
     ``{ide_data_dir}/skills/{name}/`` (typically ``{exe_dir}/data/skills/``).
+
+    Extended fields (Phase 2) for agent behavior:
+      - system_prompt_template: Appended to the base system prompt when active.
+      - tool_allowlist_json / tool_denylist_json: JSON arrays of tool names.
+      - model_override: Preferred model name for this skill.
+      - temperature_override: Preferred temperature for this skill.
     """
 
     id: int | None = None
@@ -408,6 +415,12 @@ class SkillEntry:
     file_path: str = ""        # original zip file name
     install_dir: str = ""      # relative path under the skills directory
     installed_at: str = ""     # ISO timestamp of installation
+    # Phase 2: prompt and tool config
+    system_prompt_template: str = ""       # appended to base system prompt
+    tool_allowlist_json: str | None = None  # JSON array of allowed tool names
+    tool_denylist_json: str | None = None   # JSON array of denied tool names
+    model_override: str = ""               # preferred model name
+    temperature_override: float | None = None  # preferred temperature
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

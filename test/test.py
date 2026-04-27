@@ -1,47 +1,47 @@
 #!/usr/bin/env python
-"""IDA-MCP 测试主入口。
+"""IDA-MCP test main entrypoint.
 
-使用方法:
-    python test/test.py                 # 运行全部测试（不含 debug）
-    python test/test.py --all           # 运行全部测试（含 debug）
-    
-    # 按模块运行:
-    python test/test.py --core          # Core 模块（元数据、函数、导入导出等）
-    python test/test.py --analysis      # Analysis 模块（反编译、搜索、基本块等）
-    python test/test.py --types         # Types 模块（类型声明、结构体等）
-    python test/test.py --modify        # Modify 模块（注释、重命名、补丁等）
-    python test/test.py --modeling      # Modeling 模块（建函数、转 code/data/string）
-    python test/test.py --memory        # Memory 模块（读取字节/整数/字符串）
-    python test/test.py --stack         # Stack 模块（栈帧变量）
-    python test/test.py --debug         # Debug 模块（调试器，需手动配置）
-    python test/test.py --resources     # Resources 模块（MCP 资源）
-    python test/test.py --lifecycle     # Lifecycle 模块（启动/关闭 IDA）
-    
-    # 传输模式:
-    python test/test.py --transport=stdio    # 只测试 stdio 模式
-    python test/test.py --transport=http     # 只测试 HTTP 模式
-    python test/test.py --transport=both     # 测试两种模式（默认）
-    
-    # 组合使用:
-    python test/test.py --core --analysis    # 运行 core 和 analysis
-    python test/test.py --transport=http --analysis  # HTTP 模式下运行 analysis
-    
-    # 直接使用 pytest:
-    pytest -m core                      # 只运行 core 模块
-    pytest -m "core or analysis"        # 运行 core 和 analysis
-    pytest -m "not debug"               # 排除 debug 模块
-    pytest --transport=http             # 只测试 HTTP 模式
-    pytest test/test_core.py            # 运行指定文件
+Usage:
+    python test/test.py                 # Run all tests (excluding debug)
+    python test/test.py --all           # Run all tests (including debug)
+
+    # Run by module:
+    python test/test.py --core          # Core module (metadata, functions, imports/exports, etc.)
+    python test/test.py --analysis      # Analysis module (decompile, search, basic blocks, etc.)
+    python test/test.py --types         # Types module (type declarations, structs, etc.)
+    python test/test.py --modify        # Modify module (comments, renames, patches, etc.)
+    python test/test.py --modeling      # Modeling module (create functions, convert code/data/string)
+    python test/test.py --memory        # Memory module (read bytes/integers/strings)
+    python test/test.py --stack         # Stack module (stack-frame variables)
+    python test/test.py --debug         # Debug module (debugger, manual configuration required)
+    python test/test.py --resources     # Resources module (MCP resources)
+    python test/test.py --lifecycle     # Lifecycle module (start/shutdown IDA)
+
+    # Transport modes:
+    python test/test.py --transport=stdio    # Test stdio mode only
+    python test/test.py --transport=http     # Test HTTP mode only
+    python test/test.py --transport=both     # Test both modes (default)
+
+    # Combined usage:
+    python test/test.py --core --analysis    # Run core and analysis
+    python test/test.py --transport=http --analysis  # Run analysis in HTTP mode
+
+    # Direct pytest usage:
+    pytest -m core                      # Run core module only
+    pytest -m "core or analysis"        # Run core and analysis
+    pytest -m "not debug"               # Exclude debug module
+    pytest --transport=http             # Test HTTP mode only
+    pytest test/test_core.py            # Run specified file
 """
 import sys
 import os
 
-# 添加项目根目录到路径
+# Add project root to path
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# 可用的模块 markers
+# Available module markers
 MODULES = ["core", "analysis", "types", "modify", "modeling", "memory", "stack", "debug", "resources", "lifecycle"]
 
 GATEWAY_HOST = "127.0.0.1"
@@ -50,7 +50,7 @@ GATEWAY_INTERNAL_BASE = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}/internal"
 
 
 def check_gateway() -> bool:
-    """检查 gateway internal API 是否可用。"""
+    """Check if gateway internal API is available."""
     import urllib.request
     import json
     
@@ -65,7 +65,7 @@ def check_gateway() -> bool:
 
 
 def check_instances_available() -> bool:
-    """检查是否已有已注册的 IDA 实例。"""
+    """Check if any registered IDA instances exist."""
     import urllib.request
     import json
 
@@ -81,7 +81,7 @@ def check_instances_available() -> bool:
 
 
 def check_http_proxy() -> bool:
-    """检查 HTTP 代理是否可用。"""
+    """Check if HTTP proxy is available."""
     import socket
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -94,23 +94,23 @@ def check_http_proxy() -> bool:
 
 
 def print_help():
-    """打印帮助信息。"""
+    """Print help message."""
     print(__doc__)
-    print("可用模块:")
+    print("Available modules:")
     for m in MODULES:
         print(f"  --{m}")
     print()
 
 
 def run_tests(args: list | None = None):
-    """运行测试。"""
+    """Run tests."""
     try:
         import pytest
     except ImportError:
         print("ERROR: pytest not installed. Run: pip install pytest")
         return 1
     
-    # 检查 gateway / 实例可用性
+    # Check gateway / instance availability
     if not check_gateway():
         print(f"WARNING: Gateway internal API not available at {GATEWAY_INTERNAL_BASE}")
         print("Please start IDA and load the MCP plugin first.")
@@ -126,14 +126,14 @@ def run_tests(args: list | None = None):
         if response != 'y':
             return 1
     
-    # 构建 pytest 参数
+    # Build pytest arguments
     test_dir = os.path.dirname(os.path.abspath(__file__))
     pytest_args = [test_dir, "-v"]
     
-    # 收集要运行的模块
+    # Collect modules to run
     selected_modules: list[str] = []
     run_all = False
-    transport_mode = "both"  # 默认测试两种模式
+    transport_mode = "both"  # Default to testing both modes
     remaining_args: list[str] = []
     
     if args:
@@ -150,7 +150,7 @@ def run_tests(args: list | None = None):
     # 添加 transport 参数
     pytest_args.extend([f"--transport={transport_mode}"])
     
-    # 检查 HTTP 代理（如果需要）
+    # Check HTTP proxy (if needed)
     if transport_mode in ("http", "both"):
         if not check_http_proxy():
             print(f"WARNING: HTTP proxy not available at {GATEWAY_HOST}:{GATEWAY_PORT}")
@@ -160,29 +160,29 @@ def run_tests(args: list | None = None):
             else:
                 print("HTTP tests will be skipped.")
     
-    # 构建 marker 表达式
+    # Build marker expression
     if selected_modules:
-        # 运行指定模块
+        # Run specified modules
         marker_expr = " or ".join(selected_modules)
         pytest_args.extend(["-m", marker_expr])
     elif not run_all:
-        # 默认排除 debug（需要手动配置调试器）
+        # Default excludes debug (debugger needs manual configuration)
         pytest_args.extend(["-m", "not debug"])
     
-    # 传递其他参数给 pytest
+    # Pass remaining args to pytest
     pytest_args.extend(remaining_args)
     
-    # 显示将要运行的测试
+    # Show tests to be run
     print(f"Transport mode: {transport_mode}")
     print(f"Running: pytest {' '.join(pytest_args[1:])}")
     print()
     
-    # 运行测试
+    # Run tests
     return pytest.main(pytest_args)
 
 
 def main():
-    """主函数。"""
+    """Main function."""
     args = sys.argv[1:]
     
     if "--help" in args or "-h" in args:

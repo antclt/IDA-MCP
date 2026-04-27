@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QHeaderView,
@@ -38,7 +39,7 @@ from app.presenters.settings_presenter import (
     snapshot_to_form_state,
 )
 from app.services.settings_service import SettingsService
-from app.ui.settings.dialogs import McpServerDialog, ModelProviderDialog
+from app.ui.settings.dialogs import McpServerDialog, McpServerDetailDialog, ModelProviderDialog
 from app.ui.settings.widgets import (
     NoWheelComboBox,
     NoWheelSpinBox,
@@ -56,6 +57,7 @@ from app.ui.settings.workers import (
 
 class SettingsPage(QWidget):
     language_changed = Signal(str)
+    theme_changed = Signal(str)  # "light" | "dark"
 
     def __init__(
         self,
@@ -72,6 +74,7 @@ class SettingsPage(QWidget):
         self._stack = QStackedWidget()
         self._category_row_connected = False
         self._language_combo_connected = False
+        self._theme_combo_connected = False
         self._retained_widgets: list[QWidget] = []
 
         self._install_notes = QTextEdit()
@@ -102,6 +105,7 @@ class SettingsPage(QWidget):
 
         self._plugin_dir = QLineEdit()
         self._language_combo = NoWheelComboBox()
+        self._theme_combo = NoWheelComboBox()
         self._ide_request_timeout = NoWheelSpinBox()
         self._ide_request_timeout.setRange(1, 3600)
         self._ide_request_timeout.setSuffix(" s")
@@ -197,6 +201,7 @@ class SettingsPage(QWidget):
             root_layout.setSpacing(10)
 
             body = QWidget()
+            body.setObjectName("settingsBody")
             body_layout = QHBoxLayout(body)
             body_layout.setContentsMargins(0, 0, 0, 0)
             body_layout.setSpacing(0)
@@ -210,6 +215,7 @@ class SettingsPage(QWidget):
         self._category_list.setFixedWidth(180)
         for name in (
             self._t("settings.category.config"),
+            self._t("settings.category.theme"),
             self._t("settings.category.install"),
             self._t("settings.category.upgrade"),
             self._t("settings.category.model"),
@@ -235,6 +241,7 @@ class SettingsPage(QWidget):
             self._retained_widgets.append(page)
 
         self._stack.addWidget(self._build_config_page())
+        self._stack.addWidget(self._build_theme_page())
         self._stack.addWidget(self._build_install_page())
         self._stack.addWidget(self._build_upgrade_page())
         self._stack.addWidget(self._build_model_page())
@@ -383,6 +390,52 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_save_bar(show_hint=True))
 
         return self._wrap_scroll(widget)
+
+    def _build_theme_page(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
+
+        layout.addWidget(
+            self._build_config_group(
+                self._t("settings.group.appearance"),
+                self._t("settings.group.appearance.desc"),
+                [
+                    self._build_field_row(
+                        self._t("settings.field.theme_mode"),
+                        self._t("settings.field.theme_mode.desc"),
+                        self._build_theme_combo(),
+                    ),
+                ],
+            )
+        )
+
+        layout.addStretch(1)
+        layout.addWidget(self._build_save_bar(show_hint=False))
+        return self._wrap_scroll(widget)
+
+    def _build_theme_combo(self) -> QWidget:
+        self._theme_combo.blockSignals(True)
+        self._theme_combo.clear()
+        self._theme_combo.addItem(self._t("settings.theme.light"), "light")
+        self._theme_combo.addItem(self._t("settings.theme.dark"), "dark")
+        self._theme_combo.setCurrentIndex(0)
+        self._theme_combo.blockSignals(False)
+        if not self._theme_combo_connected:
+            self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
+            self._theme_combo_connected = True
+        return self._theme_combo
+
+    def _on_theme_changed(self) -> None:
+        theme_mode = self._theme_combo.currentData() or "light"
+        self.theme_changed.emit(theme_mode)
+
+    def _refresh_theme_combo(self, theme_mode: str) -> None:
+        self._theme_combo.blockSignals(True)
+        idx = 0 if theme_mode == "light" else 1
+        self._theme_combo.setCurrentIndex(idx)
+        self._theme_combo.blockSignals(False)
 
     def _build_install_page(self) -> QWidget:
         widget = QWidget()
@@ -763,14 +816,27 @@ class SettingsPage(QWidget):
             self._settings_service.update_mcp_server(server_id, **values)
             self._refresh_mcp_servers()
 
+    def _show_mcp_server_detail(self, server) -> None:
+        """Open a detail dialog for the given MCP server."""
+        dialog = McpServerDetailDialog(self._i18n, server=server, parent=self)
+        dialog.exec()
+
     def _build_mcp_server_card(self, server) -> QFrame:
         """Build a single MCP server card widget."""
         card = QFrame()
         card.setObjectName("modelProviderCard")
         card.setProperty("server_enabled", "true" if server.enabled else "false")
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 12, 16, 12)
         card_layout.setSpacing(6)
+
+        # Click the card to open detail dialog
+        card.mousePressEvent = (
+            lambda event, s=server: self._show_mcp_server_detail(s)
+            if event.button() == Qt.MouseButton.LeftButton
+            else None
+        )
 
         transport_labels = {
             "stdio": self._t("settings.mcp.transport.stdio"),
@@ -1090,8 +1156,7 @@ class SettingsPage(QWidget):
     def _build_skill_card(self, skill) -> QFrame:
         """Build a single skill card widget."""
         card = QFrame()
-        card.setObjectName("modelProviderCard")
-        card.setProperty("skill_enabled", "true" if skill.enabled else "false")
+        card.setObjectName("skillCard")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 12, 16, 12)
         card_layout.setSpacing(6)
@@ -1183,6 +1248,173 @@ class SettingsPage(QWidget):
 
         card_layout.addWidget(details)
 
+        # --- Advanced config section (collapsible) ---
+
+        advanced_toggle = QToolButton()
+        advanced_toggle.setObjectName("advancedToggle")
+        advanced_toggle.setText(self._t("settings.skills.advanced"))
+        advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        advanced_toggle.setCheckable(True)
+        card_layout.addWidget(advanced_toggle)
+
+        advanced_panel = QWidget()
+        advanced_layout = QVBoxLayout(advanced_panel)
+        advanced_layout.setContentsMargins(0, 4, 0, 0)
+        advanced_layout.setSpacing(8)
+
+        # System prompt template
+        prompt_label = QLabel(self._t("settings.skills.prompt_template"))
+        prompt_label.setObjectName("settingsFieldLabel")
+        prompt_edit = QTextEdit()
+        prompt_edit.setObjectName("skillPromptEdit")
+        prompt_edit.setPlainText(skill.system_prompt_template or "")
+        prompt_edit.setFixedHeight(80)
+        prompt_edit.setPlaceholderText(self._t("settings.skills.prompt_template.desc"))
+        advanced_layout.addWidget(prompt_label)
+        advanced_layout.addWidget(prompt_edit)
+
+        # Tool allowlist / denylist
+        tools_row = QWidget()
+        tools_layout = QHBoxLayout(tools_row)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
+        tools_layout.setSpacing(12)
+
+        allow_label = QLabel(self._t("settings.skills.tool_allow"))
+        allow_label.setObjectName("settingsFieldLabel")
+        allow_edit = QLineEdit()
+        allow_edit.setPlaceholderText("tool_a, tool_b")
+        _allow_text = ""
+        if skill.tool_allowlist_json:
+            try:
+                _allow_text = ", ".join(json.loads(skill.tool_allowlist_json))
+            except (json.JSONDecodeError, TypeError):
+                _allow_text = skill.tool_allowlist_json
+        allow_edit.setText(_allow_text)
+        allow_col = QWidget()
+        allow_col_layout = QVBoxLayout(allow_col)
+        allow_col_layout.setContentsMargins(0, 0, 0, 0)
+        allow_col_layout.setSpacing(2)
+        allow_col_layout.addWidget(allow_label)
+        allow_col_layout.addWidget(allow_edit)
+
+        deny_label = QLabel(self._t("settings.skills.tool_deny"))
+        deny_label.setObjectName("settingsFieldLabel")
+        deny_edit = QLineEdit()
+        deny_edit.setPlaceholderText("tool_x, tool_y")
+        _deny_text = ""
+        if skill.tool_denylist_json:
+            try:
+                _deny_text = ", ".join(json.loads(skill.tool_denylist_json))
+            except (json.JSONDecodeError, TypeError):
+                _deny_text = skill.tool_denylist_json
+        deny_edit.setText(_deny_text)
+        deny_col = QWidget()
+        deny_col_layout = QVBoxLayout(deny_col)
+        deny_col_layout.setContentsMargins(0, 0, 0, 0)
+        deny_col_layout.setSpacing(2)
+        deny_col_layout.addWidget(deny_label)
+        deny_col_layout.addWidget(deny_edit)
+
+        tools_layout.addWidget(allow_col, 1)
+        tools_layout.addWidget(deny_col, 1)
+        advanced_layout.addWidget(tools_row)
+
+        # Model override + temperature
+        model_row = QWidget()
+        model_layout = QHBoxLayout(model_row)
+        model_layout.setContentsMargins(0, 0, 0, 0)
+        model_layout.setSpacing(12)
+
+        model_label = QLabel(self._t("settings.skills.model_override"))
+        model_label.setObjectName("settingsFieldLabel")
+        model_edit = QLineEdit()
+        model_edit.setPlaceholderText("(use default)")
+        model_edit.setText(skill.model_override or "")
+        model_col = QWidget()
+        model_col_layout = QVBoxLayout(model_col)
+        model_col_layout.setContentsMargins(0, 0, 0, 0)
+        model_col_layout.setSpacing(2)
+        model_col_layout.addWidget(model_label)
+        model_col_layout.addWidget(model_edit)
+
+        temp_label = QLabel(self._t("settings.skills.temperature_override"))
+        temp_label.setObjectName("settingsFieldLabel")
+        temp_spin = QDoubleSpinBox()
+        temp_spin.setRange(0.0, 2.0)
+        temp_spin.setSingleStep(0.1)
+        temp_spin.setSpecialValueText("(use default)")
+        temp_spin.setValue(
+            skill.temperature_override if skill.temperature_override is not None else 0.0
+        )
+        temp_col = QWidget()
+        temp_col_layout = QVBoxLayout(temp_col)
+        temp_col_layout.setContentsMargins(0, 0, 0, 0)
+        temp_col_layout.setSpacing(2)
+        temp_col_layout.addWidget(temp_label)
+        temp_col_layout.addWidget(temp_spin)
+
+        model_layout.addWidget(model_col, 1)
+        model_layout.addWidget(temp_col, 1)
+        advanced_layout.addWidget(model_row)
+
+        # Save button for this skill
+        save_btn = QPushButton(self._t("settings.save"))
+        save_btn.setObjectName("primaryButton")
+        save_btn.setFixedHeight(28)
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        def _save_skill_advanced(
+            sid=skill.id,
+            pe=prompt_edit,
+            ae=allow_edit,
+            de=deny_edit,
+            me=model_edit,
+            ts=temp_spin,
+        ) -> None:
+            allow_text = ae.text().strip()
+            allow_json_val = (
+                json.dumps([t.strip() for t in allow_text.split(",") if t.strip()])
+                if allow_text else None
+            )
+            deny_text = de.text().strip()
+            deny_json_val = (
+                json.dumps([t.strip() for t in deny_text.split(",") if t.strip()])
+                if deny_text else None
+            )
+            model_val = me.text().strip() or ""
+            temp_val = ts.value() if ts.value() > 0 else None
+            try:
+                self._settings_service.update_skill(
+                    sid,
+                    system_prompt_template=pe.toPlainText(),
+                    tool_allowlist_json=allow_json_val,
+                    tool_denylist_json=deny_json_val,
+                    model_override=model_val,
+                    temperature_override=temp_val,
+                )
+            except Exception as exc:
+                QMessageBox.critical(
+                    self,
+                    self._t("settings.dialog.settings"),
+                    f"Save failed: {exc}",
+                )
+
+        save_btn.clicked.connect(_save_skill_advanced)
+        advanced_layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+        # Default hidden
+        advanced_panel.setVisible(False)
+
+        def _toggle_advanced(checked: bool) -> None:
+            advanced_panel.setVisible(checked)
+            advanced_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+            )
+
+        advanced_toggle.toggled.connect(_toggle_advanced)
+        card_layout.addWidget(advanced_panel)
+
         return card
 
     # ------------------------------------------------------------------
@@ -1205,6 +1437,7 @@ class SettingsPage(QWidget):
         self._install_plugin_dir.setText(form_state.plugin_dir)
         self._set_all_save_hints(self._t("settings.save_hint"))
         self._install_notes.setPlaceholderText(self._t("settings.install.placeholder"))
+        self._refresh_theme_combo(form_state.theme_mode)
 
         # Defer installation check to a background worker — never block UI.
         self._install_ctrl.run_check()

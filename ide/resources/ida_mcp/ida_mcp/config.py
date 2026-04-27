@@ -1,33 +1,33 @@
-"""IDA-MCP 配置管理模块。
+"""IDA-MCP configuration management module.
 
-读取 config.conf 配置文件，提供所有可配置项的访问。
+Reads the config.conf file and provides access to all configurable options.
 
-配置项
+Configuration Options
 ====================
-传输方式开关:
-    - enable_stdio: 是否启用 stdio 模式 (默认 false)
-    - enable_http: 是否启用 HTTP 代理模式 (默认 true)
-    - enable_unsafe: 是否启用 unsafe 工具 (默认 true)
-    - wsl_path_bridge: 是否启用 WSL/Windows 路径桥接 (默认 false)
+Transport switches:
+    - enable_stdio: whether to enable stdio mode (default false)
+    - enable_http: whether to enable HTTP proxy mode (default true)
+    - enable_unsafe: whether to enable unsafe tools (default true)
+    - wsl_path_bridge: whether to enable WSL/Windows path bridging (default false)
 
-HTTP 代理配置:
-    - http_host: 网关监听地址 (默认 127.0.0.1)
-    - http_port: 网关监听端口 (默认 11338)
-    - http_path: MCP 端点路径 (默认 /mcp)
+HTTP proxy config:
+    - http_host: gateway bind address (default 127.0.0.1)
+    - http_port: gateway listen port (default 11338)
+    - http_path: MCP endpoint path (default /mcp)
 
-IDA 实例配置:
-    - ida_default_port: IDA 实例 MCP 端口起始值 (默认 10000)
-    - ida_path: IDA 可执行文件路径
-    - ida_python: IDA Python 可执行文件路径
-    - ida_host: IDA 实例 MCP 监听地址 (默认 127.0.0.1)
-    - open_in_ida_bundle_dir: open_in_ida staging 目录 (可选)
-    - open_in_ida_autonomous: 是否默认以 -A 启动 open_in_ida (默认 true)
-    - auto_start: 插件加载后是否默认自动启动实例服务 (默认 false)
-    - server_name: MCP 服务名 (默认 IDA-MCP)
+IDA instance config:
+    - ida_default_port: starting port for IDA instance MCP (default 10000)
+    - ida_path: IDA executable path
+    - ida_python: IDA Python executable path
+    - ida_host: IDA instance MCP listen address (default 127.0.0.1)
+    - open_in_ida_bundle_dir: open_in_ida staging directory (optional)
+    - open_in_ida_autonomous: whether open_in_ida defaults to -A (default true)
+    - auto_start: whether to auto-start the instance service after plugin load (default false)
+    - server_name: MCP service name (default IDA-MCP)
 
-通用配置:
-    - request_timeout: 请求超时时间 (默认 30 秒)
-    - debug: 是否启用调试日志 (默认 false)
+General config:
+    - request_timeout: request timeout in seconds (default 30)
+    - debug: whether to enable debug logging (default false)
 """
 
 from __future__ import annotations
@@ -35,41 +35,41 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
-# 配置文件路径
+# config file path
 _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 _CONFIG_FILE = os.path.join(_CONFIG_DIR, "config.conf")
 
-# 默认配置
+# default configuration
 _DEFAULT_CONFIG = {
-    # 传输方式开关
-    "enable_stdio": False,  # 是否启用 stdio 模式（协调器）
-    "enable_http": True,  # 是否启用 HTTP 代理模式
-    "enable_unsafe": True,  # 是否启用 unsafe 工具
-    "wsl_path_bridge": False,  # 是否启用 WSL/Windows 路径桥接
-    # HTTP 代理配置
+    # transport switches
+    "enable_stdio": False,  # whether to enable stdio mode (coordinator)
+    "enable_http": True,  # whether to enable HTTP proxy mode
+    "enable_unsafe": True,  # whether to enable unsafe tools
+    "wsl_path_bridge": False,  # whether to enable WSL/Windows path bridging
+    # HTTP proxy config
     "http_host": "127.0.0.1",
     "http_port": 11338,
     "http_path": "/mcp",
-    # IDA 实例配置
+    # IDA instance config
     "ida_default_port": 10000,
-    "ida_path": None,  # IDA 可执行文件路径
-    "ida_python": None,  # IDA Python 可执行文件路径
-    "ida_host": "127.0.0.1",  # IDA 实例 MCP 监听地址
-    "open_in_ida_bundle_dir": None,  # open_in_ida staging 目录
-    "open_in_ida_autonomous": True,  # open_in_ida 是否默认追加 -A
-    "auto_start": False,  # 插件加载后是否自动启动实例服务
-    "server_name": "IDA-MCP",  # MCP 服务名
-    # 通用配置
+    "ida_path": None,  # IDA executable path
+    "ida_python": None,  # IDA Python executable path
+    "ida_host": "127.0.0.1",  # IDA instance MCP listen address
+    "open_in_ida_bundle_dir": None,  # open_in_ida staging directory
+    "open_in_ida_autonomous": True,  # whether open_in_ida defaults to appending -A
+    "auto_start": False,  # whether to auto-start instance service after plugin load
+    "server_name": "IDA-MCP",  # MCP service name
+    # general config
     "request_timeout": 30,
     "debug": False,
 }
 
-# 缓存的配置
+# cached configuration
 _cached_config: Dict[str, Any] | None = None
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
-    """将配置值转换为布尔值。"""
+    """Coerce a config value to boolean."""
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -84,28 +84,28 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 
 def _parse_value(value: str) -> Any:
-    """解析配置值，支持字符串、整数、布尔值。"""
+    """Parse a config value, supporting strings, integers, and booleans."""
     value = value.strip()
 
-    # 去除引号
+    # strip quotes
     if (value.startswith('"') and value.endswith('"')) or (
         value.startswith("'") and value.endswith("'")
     ):
         return value[1:-1]
 
-    # 布尔值
+    # booleans
     if value.lower() in ("true", "yes", "on", "1"):
         return True
     if value.lower() in ("false", "no", "off", "0"):
         return False
 
-    # 整数
+    # integers
     try:
         return int(value)
     except ValueError:
         pass
 
-    # 浮点数
+    # floats
     try:
         return float(value)
     except ValueError:
@@ -115,7 +115,7 @@ def _parse_value(value: str) -> Any:
 
 
 def parse_config_file(path: str) -> Dict[str, Any]:
-    """解析任意 config.conf 风格文件。"""
+    """Parse any config.conf-style file."""
     config: Dict[str, Any] = {}
 
     if not os.path.exists(path):
@@ -139,7 +139,7 @@ def parse_config_file(path: str) -> Dict[str, Any]:
 
 
 def load_config(reload: bool = False) -> Dict[str, Any]:
-    """加载配置文件。"""
+    """Load the configuration file."""
     global _cached_config
 
     if _cached_config is not None and not reload:
@@ -152,18 +152,18 @@ def load_config(reload: bool = False) -> Dict[str, Any]:
 
 
 # ============================================================================
-# 网关内部 API 配置访问函数
+# Gateway internal API config accessors
 # ============================================================================
 
 
 def get_http_bind_host() -> str:
-    """获取 HTTP 网关监听地址。"""
+    """Get the HTTP gateway bind address."""
     config = load_config()
     return str(config.get("http_host", "127.0.0.1"))
 
 
 def get_http_connect_host() -> str:
-    """获取客户端访问 HTTP 网关时应使用的地址。"""
+    """Get the address clients should use to reach the HTTP gateway."""
     host = get_http_bind_host().strip()
     if host in {"0.0.0.0", "::", ""}:
         return "127.0.0.1"
@@ -171,39 +171,39 @@ def get_http_connect_host() -> str:
 
 
 def get_gateway_internal_host() -> str:
-    """获取 gateway 内部 API 的客户端访问地址。"""
+    """Get the client-facing address for the gateway internal API."""
     return get_http_connect_host()
 
 
 def get_gateway_internal_port() -> int:
-    """获取 gateway 内部 API 所在端口（与网关端口一致）。"""
+    """Get the gateway internal API port (same as the gateway port)."""
     return get_http_port()
 
 
 def get_gateway_internal_url() -> str:
-    """获取 gateway 内部 API 基础 URL。"""
+    """Get the gateway internal API base URL."""
     return f"http://{get_http_connect_host()}:{get_http_port()}/internal"
 
 
 # ============================================================================
-# HTTP 代理配置访问函数
+# HTTP proxy config accessors
 # ============================================================================
 
 
 def get_http_port() -> int:
-    """获取 HTTP 代理监听端口。"""
+    """Get the HTTP proxy listen port."""
     config = load_config()
     return int(config.get("http_port", 11338))
 
 
 def get_http_path() -> str:
-    """获取 HTTP MCP 端点路径。"""
+    """Get the HTTP MCP endpoint path."""
     config = load_config()
     return str(config.get("http_path", "/mcp"))
 
 
 def get_http_url() -> str:
-    """获取客户端访问用的完整 HTTP 网关 URL。"""
+    """Get the full HTTP gateway URL for client access."""
     host = get_http_connect_host()
     port = get_http_port()
     path = get_http_path()
@@ -211,25 +211,25 @@ def get_http_url() -> str:
 
 
 # ============================================================================
-# IDA 实例配置访问函数
+# IDA instance config accessors
 # ============================================================================
 
 
 def get_ida_host() -> str:
-    """获取 IDA 实例 MCP 服务器监听地址。"""
+    """Get the IDA instance MCP server listen address."""
     config = load_config()
     host = str(config.get("ida_host", "127.0.0.1")).strip()
     return host or "127.0.0.1"
 
 
 def get_ida_default_port() -> int:
-    """获取 IDA 实例 MCP 端口起始值。"""
+    """Get the starting port for IDA instance MCP."""
     config = load_config()
     return int(config.get("ida_default_port", 10000))
 
 
 def get_ida_path() -> str | None:
-    """获取 IDA 可执行文件路径。"""
+    """Get the IDA executable path."""
     config = load_config()
     path = config.get("ida_path")
 
@@ -241,7 +241,7 @@ def get_ida_path() -> str | None:
 
 
 def get_ida_python() -> str | None:
-    """获取 IDA Python 可执行文件路径。"""
+    """Get the IDA Python executable path."""
     config = load_config()
     path = config.get("ida_python")
 
@@ -253,7 +253,7 @@ def get_ida_python() -> str | None:
 
 
 def get_open_in_ida_bundle_dir() -> str | None:
-    """获取 open_in_ida 使用的 staging 目录。"""
+    """Get the staging directory used by open_in_ida."""
     config = load_config()
     configured_path = config.get("open_in_ida_bundle_dir")
     if isinstance(configured_path, str):
@@ -264,65 +264,65 @@ def get_open_in_ida_bundle_dir() -> str | None:
 
 
 def is_open_in_ida_autonomous_enabled() -> bool:
-    """是否让 open_in_ida 默认以 autonomous 模式启动。"""
+    """Whether open_in_ida should default to autonomous mode."""
     config = load_config()
     return _coerce_bool(config.get("open_in_ida_autonomous", True), True)
 
 
 # ============================================================================
-# 通用配置访问函数
+# General config accessors
 # ============================================================================
 
 
 def get_request_timeout() -> int:
-    """获取请求超时时间（秒）。"""
+    """Get the request timeout in seconds."""
     config = load_config()
     return int(config.get("request_timeout", 30))
 
 
 def is_debug_enabled() -> bool:
-    """是否启用调试日志。"""
+    """Whether debug logging is enabled."""
     config = load_config()
     return bool(config.get("debug", False))
 
 
 # ============================================================================
-# 传输方式开关
+# Transport switches
 # ============================================================================
 
 
 def is_stdio_enabled() -> bool:
-    """是否启用 stdio 模式（协调器）。"""
+    """Whether stdio mode (coordinator) is enabled."""
     config = load_config()
     return bool(config.get("enable_stdio", False))
 
 
 def is_http_enabled() -> bool:
-    """是否启用 HTTP 代理模式。"""
+    """Whether HTTP proxy mode is enabled."""
     config = load_config()
     return bool(config.get("enable_http", True))
 
 
 def is_unsafe_enabled() -> bool:
-    """是否启用 unsafe 工具。"""
+    """Whether unsafe tools are enabled."""
     config = load_config()
     return _coerce_bool(config.get("enable_unsafe", True), True)
 
 
 def is_wsl_path_bridge_enabled() -> bool:
-    """是否启用 WSL/Windows 路径桥接。"""
+    """Whether WSL/Windows path bridging is enabled."""
     config = load_config()
     return _coerce_bool(config.get("wsl_path_bridge", False), False)
 
 
 def is_auto_start_enabled() -> bool:
-    """插件加载后是否默认自动启动实例服务。"""
+    """Whether the instance service auto-starts after plugin load."""
     config = load_config()
     return _coerce_bool(config.get("auto_start", False), False)
 
 
 def get_server_name() -> str:
-    """获取 MCP 服务名。"""
+    """Get the MCP service name."""
     config = load_config()
     name = str(config.get("server_name", "IDA-MCP")).strip()
     return name or "IDA-MCP"

@@ -1,16 +1,20 @@
-"""Chat composer widget — rounded input area with model selector and send button."""
+"""Chat composer widget — rounded input area with send button.
+
+Phase 2: Provider and skill selectors are injected from the page layer
+via `add_selector()`. The composer no longer owns a model menu.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QPoint, Qt, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
-    QMenu,
     QPushButton,
+    QStyle,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -21,10 +25,11 @@ if TYPE_CHECKING:
 
 
 class Composer(QWidget):
-    """Message input area with inline model selector and circular send button."""
+    """Message input area with selector slots and send/stop button."""
 
     message_submitted = Signal(str)
-    model_changed = Signal(int)  # provider_id
+    stop_requested = Signal()
+    clear_requested = Signal()
 
     def __init__(
         self,
@@ -32,11 +37,10 @@ class Composer(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("composerArea")
 
         self._i18n = i18n
-        self._model_name = ""
-        self._model_menu = QMenu(self)
-        self._model_menu.setObjectName("chatModelMenu")
+        self._is_running = False
 
         # --- Outer container (rounded) ---
         self._container = QFrame()
@@ -54,26 +58,35 @@ class Composer(QWidget):
         self._input.installEventFilter(self)
         container_layout.addWidget(self._input, 3)
 
-        # --- Bottom bar: model selector + send button ---
+        # --- Bottom bar: selectors + clear icon + send/stop ---
         bottom_bar = QWidget()
-        bottom_layout = QHBoxLayout(bottom_bar)
-        bottom_layout.setContentsMargins(0, 6, 0, 0)
-        bottom_layout.setSpacing(8)
+        self._bottom_layout = QHBoxLayout(bottom_bar)
+        self._bottom_layout.setContentsMargins(0, 6, 0, 0)
+        self._bottom_layout.setSpacing(8)
 
-        self._model_button = QPushButton()
-        self._model_button.setObjectName("chatModelButton")
-        self._model_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._model_button.setFixedHeight(28)
-        self._model_button.clicked.connect(self._show_model_menu)
-        bottom_layout.addWidget(self._model_button)
-        bottom_layout.addStretch(1)
+        # Selectors are added by ChatPage via add_selector()
+        self._selector_widgets: list[QWidget] = []
 
-        self._send_button = QPushButton("↑")
+        # Clear button (icon only, placed after selectors, before stretch)
+        self._clear_button = QPushButton()
+        self._clear_button.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton)
+        )
+        self._clear_button.setObjectName("chatClearButton")
+        self._clear_button.setFixedSize(28, 28)
+        self._clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_button.setToolTip(self._t("chat.clear"))
+        self._clear_button.clicked.connect(self.clear_requested.emit)
+        self._bottom_layout.addWidget(self._clear_button)
+
+        self._bottom_layout.addStretch(1)
+
+        self._send_button = QPushButton("\u2191")
         self._send_button.setObjectName("chatSendRoundButton")
         self._send_button.setFixedSize(32, 32)
         self._send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._send_button.clicked.connect(self._on_send)
-        bottom_layout.addWidget(self._send_button)
+        self._bottom_layout.addWidget(self._send_button)
 
         container_layout.addWidget(bottom_bar, 1)
 
@@ -83,10 +96,20 @@ class Composer(QWidget):
         outer.setSpacing(0)
         outer.addWidget(self._container)
 
-        self._update_model_text()
-
     def _t(self, key: str, **kwargs: object) -> str:
         return self._i18n.t(key, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Selector management
+    # ------------------------------------------------------------------
+
+    def add_selector(self, widget: QWidget) -> None:
+        """Add a selector widget to the bottom bar, before the clear icon."""
+        self._selector_widgets.append(widget)
+        # Layout order: [selector(s)...] [clear] [stretch] [send]
+        # Insert before the clear button (index = count - 3)
+        clear_index = self._bottom_layout.count() - 3
+        self._bottom_layout.insertWidget(max(0, clear_index), widget)
 
     # ------------------------------------------------------------------
     # Event filter
@@ -104,43 +127,13 @@ class Composer(QWidget):
         return super().eventFilter(obj, event)
 
     # ------------------------------------------------------------------
-    # Model menu
-    # ------------------------------------------------------------------
-
-    def update_model_list(
-        self, models: list[tuple[int, str]], active_id: int | None = None
-    ) -> None:
-        self._model_menu.clear()
-        for pid, name in models:
-            action = self._model_menu.addAction(name)
-            action.setCheckable(True)
-            action.setChecked(pid == active_id)
-            action.triggered.connect(
-                lambda checked, p=pid: self.model_changed.emit(p)
-            )
-        if not models:
-            action = self._model_menu.addAction(self._t("chat.no_models"))
-            action.setEnabled(False)
-
-    def _show_model_menu(self) -> None:
-        btn = self._model_button
-        menu_size = self._model_menu.sizeHint()
-        bottom_left = btn.mapToGlobal(btn.rect().bottomLeft())
-        pos = bottom_left - QPoint(
-            0, btn.height() + menu_size.height() + 4
-        )
-        screen = self.screen()
-        if screen:
-            geo = screen.availableGeometry()
-            if pos.y() < geo.top():
-                pos.setY(bottom_left.y() + 4)
-        self._model_menu.popup(pos)
-
-    # ------------------------------------------------------------------
     # Send
     # ------------------------------------------------------------------
 
     def _on_send(self) -> None:
+        if self._is_running:
+            self.stop_requested.emit()
+            return
         text = self._input.toPlainText().strip()
         if text:
             self.message_submitted.emit(text)
@@ -150,19 +143,36 @@ class Composer(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def retranslate(self) -> None:
+        """Refresh all translatable text after a language change."""
+        self._input.setPlaceholderText(self._t("chat.placeholder"))
+        self._clear_button.setToolTip(self._t("chat.clear"))
+
     def set_enabled(self, enabled: bool) -> None:
+        """Enable or disable the text input.
+
+        The send/stop button is always kept interactive — ``set_running``
+        manages its visual state independently.
+        """
         self._input.setEnabled(enabled)
-        self._send_button.setEnabled(enabled)
+
+    def set_running(self, running: bool) -> None:
+        """Toggle between send mode (↑) and stop mode (■)."""
+        self._is_running = running
+        if running:
+            self._send_button.setText("\u25A0")  # ■ stop icon
+            self._send_button.setObjectName("chatStopRoundButton")
+            self._input.setEnabled(False)
+        else:
+            self._send_button.setText("\u2191")  # ↑ send icon
+            self._send_button.setObjectName("chatSendRoundButton")
+            self._input.setEnabled(True)
+        # Force QSS re-polish
+        self._send_button.style().unpolish(self._send_button)
+        self._send_button.style().polish(self._send_button)
 
     def clear_input(self) -> None:
         self._input.clear()
 
     def set_placeholder(self, text: str) -> None:
         self._input.setPlaceholderText(text)
-
-    def set_model_name(self, name: str) -> None:
-        self._model_name = name or self._t("chat.no_model")
-        self._update_model_text()
-
-    def _update_model_text(self) -> None:
-        self._model_button.setText(f"  ● {self._model_name}  ▲")

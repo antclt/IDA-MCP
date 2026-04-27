@@ -1,19 +1,19 @@
-"""核心 API - IDB 元数据、函数/字符串/全局变量列表等。
+"""Core API - IDB metadata, function/string/global lists, etc.
 
-提供工具:
-    - check_connection     检查网关/注册表连接状态
-    - list_instances       列出网关中所有已注册实例
-    - get_metadata         获取 IDB 元数据
-    - list_functions       列出函数
-    - list_globals         列出全局变量
-    - list_strings         列出字符串
-    - list_local_types     列出本地类型
-    - get_entry_points     列出入口点
-    - convert_number       数字转换
-    - list_imports         列出导入表
-    - list_exports         列出导出表
-    - list_segments        列出内存段
-    - get_cursor           获取当前光标位置
+Provides tools:
+    - check_connection     check gateway/registry connection status
+    - list_instances       list all registered instances in the gateway
+    - get_metadata         get IDB metadata
+    - list_functions       list functions
+    - list_globals         list global variables
+    - list_strings         list strings
+    - list_local_types     list local types
+    - get_entry_points     list entry points
+    - convert_number       number conversion
+    - list_imports         list imports
+    - list_exports         list exports
+    - list_segments        list memory segments
+    - get_cursor           get current cursor position
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from .strings_cache import (
     invalidate_strings_cache as _shared_invalidate_strings_cache,
 )
 
-# IDA 模块导入
+# IDA module imports
 try:
     import idaapi  # type: ignore
     import idautils  # type: ignore
@@ -45,7 +45,7 @@ try:
     import ida_loader  # type: ignore
     import ida_pro  # type: ignore
 except ImportError:
-    # 允许在非 IDA 环境下导入（如测试），但相关功能将不可用
+    # allow import outside IDA (e.g. for tests), but related features will be unavailable
     idaapi = None
     idautils = None
     ida_funcs = None
@@ -63,21 +63,21 @@ from . import registry
 
 
 # ============================================================================
-# 字符串缓存 (避免每次调用都 rebuild strlist)
+# String cache (avoid rebuilding strlist on every call)
 # ============================================================================
 
 def _get_strings_cache() -> list:
-    """获取缓存的字符串列表，首次访问时构建。"""
+    """Get the cached string list, building it on first access."""
     return _shared_get_strings_cache()
 
 
 def invalidate_strings_cache():
-    """清除字符串缓存 (IDB 变更后调用)。"""
+    """Clear the string cache (call after IDB changes)."""
     _shared_invalidate_strings_cache()
 
 
 def init_caches():
-    """在插件启动时预构建缓存。"""
+    """Pre-build caches when the plugin starts."""
     import time
     t0 = time.perf_counter()
     strings_count = _shared_init_strings_cache()
@@ -86,7 +86,7 @@ def init_caches():
 
 
 # ============================================================================
-# 实例管理
+# Instance management
 # ============================================================================
 
 @tool
@@ -115,13 +115,13 @@ def list_instances() -> List[dict]:
 def get_metadata() -> dict:
     """Get IDB metadata (input_file, arch, bits, endian, hash)."""
 
-    # 获取输入文件
+    # get input file
     try:
         input_file = idaapi.get_input_file_path()
     except Exception:
         input_file = None
     
-    # 获取架构/位宽
+    # get architecture/bit width
     arch: Optional[str] = None
     bits = 0
     try:
@@ -142,7 +142,7 @@ def get_metadata() -> dict:
     except Exception:
         pass
     
-    # 回退获取架构
+    # fallback architecture retrieval
     if not arch:
         for fn_name in ('ph_get_idp_name', 'get_idp_name', 'ph_get_id', 'ph_get_idp_desc'):
             try:
@@ -157,7 +157,7 @@ def get_metadata() -> dict:
             except Exception:
                 continue
     
-    # 回退获取位宽
+    # fallback bit-width retrieval
     if not bits:
         try:
             if getattr(idaapi, '__EA64__', False):
@@ -167,7 +167,7 @@ def get_metadata() -> dict:
         except Exception:
             bits = 0
     
-    # 计算文件哈希
+    # compute file hash
     file_hash: Optional[str] = None
     if input_file and os.path.isfile(input_file):
         try:
@@ -179,10 +179,10 @@ def get_metadata() -> dict:
         except Exception:
             file_hash = None
     
-    # 归一化架构
+    # normalize architecture
     arch_normalized = normalize_arch(arch, bits)
     
-    # 端序
+    # endianness
     endian = None
     try:
         inf3 = idaapi.get_inf_structure()  # type: ignore
@@ -203,7 +203,7 @@ def get_metadata() -> dict:
 
 
 # ============================================================================
-# 函数列表
+# Function list
 # ============================================================================
 
 @tool
@@ -245,7 +245,7 @@ def list_functions(
 
 
 # ============================================================================
-# 全局变量
+# Global variables
 # ============================================================================
 
 @tool
@@ -296,7 +296,7 @@ def list_globals(
 
 
 # ============================================================================
-# 字符串
+# Strings
 # ============================================================================
 
 @tool
@@ -333,7 +333,7 @@ def list_strings(
 
 
 # ============================================================================
-# 本地类型
+# Local types
 # ============================================================================
 
 @tool
@@ -381,7 +381,7 @@ def list_local_types() -> dict:
 
 
 # ============================================================================
-# 入口点
+# Entry points
 # ============================================================================
 
 @tool
@@ -423,7 +423,7 @@ def get_entry_points() -> dict:
 
 
 # ============================================================================
-# 数字转换
+# Number conversion
 # ============================================================================
 
 @tool
@@ -488,7 +488,7 @@ def convert_number(
 
 
 # ============================================================================
-# 导入表
+# Imports
 # ============================================================================
 
 @tool
@@ -509,7 +509,7 @@ def list_imports(
     items: List[dict] = []
     
     def import_callback(ea: int, name: str, ordinal: int) -> bool:
-        """回调函数，收集每个导入项。"""
+        """Callback to collect each import item."""
         if name:
             items.append({
                 "ea": hex_addr(ea),
@@ -517,7 +517,7 @@ def list_imports(
                 "ordinal": ordinal if ordinal else None,
                 "module": current_module,
             })
-        return True  # 继续枚举
+        return True  # continue enumeration
     
     try:
         nimps = idaapi.get_import_module_qty()
@@ -532,7 +532,7 @@ def list_imports(
     items.sort(key=lambda x: (x.get('module', ''), x.get('name', '')))
     
     if pattern:
-        # 支持搜索函数名或模块名
+        # support searching by function name or module name
         substr = pattern.lower()
         items = [
             it for it in items 
@@ -543,7 +543,7 @@ def list_imports(
 
 
 # ============================================================================
-# 导出表
+# Exports
 # ============================================================================
 
 @tool
@@ -583,7 +583,7 @@ def list_exports(
 
 
 # ============================================================================
-# 内存段
+# Memory segments
 # ============================================================================
 
 @tool
@@ -601,7 +601,7 @@ def list_segments() -> dict:
             name = ida_segment.get_segm_name(s)
             seg_class = ida_segment.get_segm_class(s)
             
-            # 解析权限
+            # parse permissions
             perm = s.perm
             readable = bool(perm & ida_segment.SEGPERM_READ)
             writable = bool(perm & ida_segment.SEGPERM_WRITE)
@@ -624,7 +624,7 @@ def list_segments() -> dict:
 
 
 # ============================================================================
-# 光标位置
+# Cursor position
 # ============================================================================
 
 @tool
@@ -633,7 +633,7 @@ def get_cursor() -> dict:
     """Get current cursor position and context in IDA."""
     result: dict = {}
     
-    # 获取当前光标地址
+    # get current cursor address
     try:
         ea = ida_kernwin.get_screen_ea()
         result["ea"] = hex_addr(ea)
@@ -642,7 +642,7 @@ def get_cursor() -> dict:
         result["ea"] = None
         result["ea_int"] = None
     
-    # 获取当前函数
+    # get current function
     ea_int = result.get("ea_int")
     if ea_int is not None:
         try:
@@ -658,7 +658,7 @@ def get_cursor() -> dict:
         except Exception:
             result["function"] = None
     
-    # 获取选区
+    # get selection
     try:
         selection_start, selection_end = ida_kernwin.read_range_selection(None)
         if selection_start != idaapi.BADADDR and selection_end != idaapi.BADADDR:

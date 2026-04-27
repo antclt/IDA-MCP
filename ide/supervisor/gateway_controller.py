@@ -2,6 +2,7 @@
 
 All operations (status, start, stop) use the gateway's internal HTTP API
 mounted at /internal/* on the gateway port, or direct TCP port probing.
+Stop falls back to force-killing the process when graceful shutdown fails.
 Every HTTP request and response is logged via an optional log callback.
 """
 
@@ -9,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import time
@@ -224,7 +226,7 @@ class GatewayController:
         return self._subprocess_start()
 
     # ------------------------------------------------------------------
-    # Stop — POST /internal/shutdown
+    # Stop — POST /internal/shutdown (graceful, then force)
     # ------------------------------------------------------------------
     def stop(self) -> GatewayStatus:
         host, port, path = self._gateway_params()
@@ -245,18 +247,30 @@ class GatewayController:
                 raw={},
             )
 
-        # Send shutdown request — never force, let the server refuse if instances exist
+        # 1. Graceful shutdown (no force)
         code, result = self._http_post(self._internal_url("/shutdown"), body={})
         if code == 409:
-            # Instances still registered — shutdown refused
+            # Instances still registered — try force shutdown
             msg = (result or {}).get("error", "Shutdown refused")
             count = (result or {}).get("instance_count", "?")
-            self._log_msg(f"Shutdown refused: {msg} (instances: {count})")
-            return self.status()
+            self._log_msg(
+                f"Graceful shutdown refused: {msg} (instances: {count}), retrying with force..."
+            )
+            code, result = self._http_post(
+                self._internal_url("/shutdown"), body={"force": True}
+            )
 
         if code == 0 or result is None:
-            self._log_msg("Shutdown request failed (network error)")
-            return self.status()
+            # Network error — gateway not responding, force kill by port
+            self._log_msg(
+                "Shutdown request failed (network error), force-killing by port..."
+            )
+            return self._force_stop(host, port, path)
+
+        if isinstance(result, dict) and result.get("error"):
+            # Server responded but refused even with force
+            self._log_msg(f"Force shutdown also failed: {result['error']}")
+            return self._force_stop(host, port, path)
 
         # Shutdown accepted — wait for port to close
         self._log_msg("Shutdown accepted, waiting for port to close...")
@@ -265,8 +279,83 @@ class GatewayController:
                 self._log_msg("Gateway stopped (port closed)")
                 break
             time.sleep(0.25)
+        else:
+            # Port still open after waiting — force kill
+            self._log_msg("Port did not close in time, force-killing...")
+            return self._force_stop(host, port, path)
 
         return self.status()
+
+    def _force_stop(
+        self, host: str, port: int, path: str
+    ) -> GatewayStatus:
+        """Force-kill the process listening on *port* and return STOPPED status."""
+        killed = self._kill_port(port)
+        if killed:
+            self._log_msg(f"Force-killed process on port {port}")
+        else:
+            self._log_msg(f"Could not find/kill process on port {port}")
+        # Brief wait for port release
+        time.sleep(0.3)
+        return GatewayStatus(
+            state=GatewayState.STOPPED,
+            alive=False,
+            proxy_alive=False,
+            enabled=True,
+            host=host,
+            port=port,
+            path=path,
+            instance_count=0,
+            last_error=None if killed else f"Force stop attempted on port {port}",
+            raw={"force_killed": killed},
+        )
+
+    @staticmethod
+    def _kill_port(port: int) -> bool:
+        """Kill the process listening on the given port. Returns True on success."""
+        try:
+            if os.name == "nt":
+                # netstat -ano to find PID, then taskkill
+                proc = subprocess.run(
+                    ["netstat", "-ano", "-p", "TCP"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                for line in proc.stdout.splitlines():
+                    # Match lines like  TCP    0.0.0.0:13337    0.0.0.0:0    LISTENING    12345
+                    parts = line.split()
+                    if (
+                        len(parts) >= 5
+                        and parts[3] == "LISTENING"
+                        and parts[1] == f"0.0.0.0:{port}"
+                    ):
+                        pid = parts[-1]
+                        if pid.isdigit():
+                            kill_result = subprocess.run(
+                                ["taskkill", "/F", "/T", "/PID", pid],
+                                capture_output=True,
+                                timeout=5,
+                            )
+                            return kill_result.returncode == 0
+                return False
+            else:
+                # lsof or fuser on Unix
+                proc = subprocess.run(
+                    ["lsof", "-ti", f":{port}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                pids = proc.stdout.strip().split()
+                if pids:
+                    for pid_str in pids:
+                        if pid_str.isdigit():
+                            os.kill(int(pid_str), signal.SIGKILL)
+                    return True
+                return False
+        except Exception:
+            return False
 
     def restart(self) -> GatewayStatus:
         stopped = self.stop()

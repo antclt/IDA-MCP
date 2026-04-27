@@ -1,17 +1,17 @@
-"""分析 API - 反编译、反汇编、交叉引用等。
+"""Analysis API - decompilation, disassembly, cross-references, etc.
 
-提供工具:
-    - decompile           反编译函数 (Hex-Rays)
-    - disasm              反汇编函数
-    - linear_disasm       线性反汇编
-    - get_callers         获取函数调用者摘要
-    - get_callees         获取函数被调函数摘要
-    - get_function_signature 获取函数签名
-    - xrefs_to            交叉引用 (到)
-    - xrefs_from          交叉引用 (从)
-    - xrefs_to_field      结构体字段引用
-    - find_bytes          字节模式搜索
-    - get_basic_blocks    获取基本块
+Provides tools:
+    - decompile           decompile function (Hex-Rays)
+    - disasm              disassemble function
+    - linear_disasm       linear disassembly
+    - get_callers         get caller summary
+    - get_callees         get callee summary
+    - get_function_signature get function signature
+    - xrefs_to            cross-references (to)
+    - xrefs_from          cross-references (from)
+    - xrefs_to_field      struct field references
+    - find_bytes          byte pattern search
+    - get_basic_blocks    get basic blocks
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from .rpc import tool
 from .sync import idaread, wait_for_auto_analysis
 from .utils import parse_address, hex_addr
 
-# IDA 模块导入
+# IDA module imports
 try:
     import idaapi  # type: ignore
     import idautils  # type: ignore
@@ -39,11 +39,11 @@ except ImportError:
     ida_search = None
     ida_gdl = None
 
-from . import compat  # IDA 8.x/9.x 兼容层
+from . import compat  # IDA 8.x/9.x compatibility layer
 
 
 # ============================================================================
-# 内部辅助
+# Internal helpers
 # ============================================================================
 
 def _resolve_function(query: Union[int, str]) -> dict:
@@ -254,7 +254,7 @@ def _signature_from_pseudocode(info: dict) -> Optional[str]:
 
 
 # ============================================================================
-# 反编译
+# Decompilation
 # ============================================================================
 
 @tool
@@ -264,7 +264,7 @@ def decompile(
 ) -> List[dict]:
     """Decompile function(s) at given address(es). Requires Hex-Rays."""
     wait_for_auto_analysis()
-    # 解析地址列表
+    # parse address list
     from .utils import normalize_list_input
     queries = normalize_list_input(addr)
     
@@ -277,7 +277,7 @@ def decompile(
 
 
 def _decompile_single(query: str) -> dict:
-    """反编译单个函数。"""
+    """Decompile a single function."""
     info = _resolve_function(query)
     if info.get("error"):
         return info
@@ -298,7 +298,7 @@ def _decompile_single(query: str) -> dict:
 
 
 # ============================================================================
-# 反汇编
+# Disassembly
 # ============================================================================
 
 @tool
@@ -320,7 +320,7 @@ def disasm(
 
 
 def _disasm_single(query: str) -> dict:
-    """反汇编单个函数。"""
+    """Disassemble a single function."""
     info = _resolve_function(query)
     if info.get("error"):
         return info
@@ -343,7 +343,7 @@ def _disasm_single(query: str) -> dict:
             except Exception:
                 insn_len = 0
             
-            # 指令文本
+            # instruction text
             text = None
             try:
                 text = idaapi.generate_disasm_line(head_ea, 0)
@@ -352,7 +352,7 @@ def _disasm_single(query: str) -> dict:
             if text is None:
                 text = "?"
             
-            # 指令 bytes
+            # instruction bytes
             b_hex = None
             if insn_len:
                 try:
@@ -364,7 +364,7 @@ def _disasm_single(query: str) -> dict:
                 except Exception:
                     b_hex = None
             
-            # 注释
+            # comments
             cmt_parts: List[str] = []
             try:
                 c1 = idaapi.get_cmt(head_ea, False)
@@ -399,7 +399,7 @@ def _disasm_single(query: str) -> dict:
 
 
 # ============================================================================
-# 线性反汇编
+# Linear disassembly
 # ============================================================================
 
 @tool
@@ -424,7 +424,7 @@ def linear_disasm(
     
     ea = int(addr_int)
     
-    # 确认段存在
+    # verify segment exists
     try:
         if hasattr(idaapi, 'getseg') and not idaapi.getseg(ea):
             return {'error': 'no_segment'}
@@ -447,7 +447,7 @@ def linear_disasm(
                     return {'error': 'decode_failed'}
                 break
             
-            # 读取 flags 判定 is_code
+            # read flags to determine is_code
             is_code = False
             try:
                 flags = idaapi.get_full_flags(ea)
@@ -455,7 +455,7 @@ def linear_disasm(
             except Exception:
                 pass
             
-            # 指令文本
+            # instruction text
             text = None
             try:
                 text = idaapi.generate_disasm_line(ea, 0)
@@ -503,7 +503,7 @@ def linear_disasm(
 
 
 # ============================================================================
-# 调用关系与结构化伪代码
+# Call relationships and structured pseudocode
 # ============================================================================
 
 @tool
@@ -643,7 +643,7 @@ def get_function_signature(
 
 
 # ============================================================================
-# 交叉引用
+# Cross-references
 # ============================================================================
 
 @tool
@@ -664,7 +664,7 @@ def xrefs_to(
 
 
 def _xrefs_to_single(query: str) -> dict:
-    """获取单个地址的交叉引用。"""
+    """Get cross-references to a single address."""
     parsed = parse_address(query)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "query": query}
@@ -710,7 +710,7 @@ def xrefs_from(
 
 
 def _xrefs_from_single(query: str) -> dict:
-    """获取单个地址的出向交叉引用。"""
+    """Get outgoing cross-references from a single address."""
     parsed = parse_address(query)
     if not parsed["ok"] or parsed["value"] is None:
         return {"error": "invalid address", "query": query}
@@ -739,7 +739,7 @@ def _xrefs_from_single(query: str) -> dict:
 
 
 # ============================================================================
-# 结构体字段引用
+# Struct field references
 # ============================================================================
 
 @tool
@@ -760,7 +760,7 @@ def xrefs_to_field(
     if not s:
         return {"error": "struct not found"}
     
-    # 查找成员偏移
+    # find member offset
     target_off = None
     m = compat.get_first_member(s)
     while m is not None and m != idaapi.BADADDR:
@@ -782,7 +782,7 @@ def xrefs_to_field(
     if target_off is None:
         return {"error": "field not found"}
     
-    # 启发式扫描
+    # heuristic scan
     fname_lower = field_name.lower()
     matches: List[dict] = []
     truncated = False
@@ -843,7 +843,7 @@ def xrefs_to_field(
 
 
 # ============================================================================
-# 字节模式搜索
+# Byte pattern search
 # ============================================================================
 
 @tool
@@ -861,7 +861,7 @@ def find_bytes(
     if limit < 1 or limit > 1000:
         return {"error": "limit out of range (1..1000)"}
     
-    # 解析起止地址
+    # parse start/end addresses
     start_ea = None
     end_ea = None
     
@@ -875,7 +875,7 @@ def find_bytes(
         if parsed["ok"] and parsed["value"] is not None:
             end_ea = parsed["value"]
     
-    # 默认搜索整个数据库
+    # default to searching the whole database
     if start_ea is None:
         try:
             start_ea = idaapi.cvar.inf.min_ea  # type: ignore
@@ -894,13 +894,13 @@ def find_bytes(
             except Exception:
                 end_ea = 0xFFFFFFFFFFFFFFFF
     
-    # 解析模式字符串
+    # parse pattern string
     pattern_text = pattern.strip()
     
-    # 转换为 IDA 搜索格式
-    # IDA 使用空格分隔的十六进制字节，? 表示通配符
-    # 输入: "48 8B ?? ?? 48 89" 或 "48 8B ? ? 48 89"
-    # IDA 格式: "48 8B ? ? 48 89"
+    # convert to IDA search format
+    # IDA uses space-separated hex bytes, ? as wildcard
+    # input: "48 8B ?? ?? 48 89" or "48 8B ? ? 48 89"
+    # IDA format: "48 8B ? ? 48 89"
     parts = pattern_text.split()
     ida_pattern_parts = []
     for p in parts:
@@ -910,7 +910,7 @@ def find_bytes(
         if p in ('??', '?'):
             ida_pattern_parts.append('?')
         else:
-            # 验证是否为有效的十六进制
+            # validate hex byte
             try:
                 int(p, 16)
                 ida_pattern_parts.append(p.upper())
@@ -922,14 +922,14 @@ def find_bytes(
     
     ida_pattern = ' '.join(ida_pattern_parts)
     
-    # 搜索
+    # search
     matches: List[dict] = []
     truncated = False
     
     try:
         ea = start_ea
         while ea < end_ea and len(matches) < limit:
-            # 使用 ida_search.find_binary
+            # use ida_search.find_binary
             try:
                 found = ida_search.find_binary(  # type: ignore
                     ea, end_ea, ida_pattern,
@@ -942,9 +942,9 @@ def find_bytes(
             if found == idaapi.BADADDR:
                 break
             
-            # 读取匹配的字节
+            # read matched bytes
             match_len = len([p for p in ida_pattern_parts if p != '?'])
-            # 实际匹配长度是所有部分
+            # actual match length is the total number of parts
             actual_len = len(ida_pattern_parts)
             
             bytes_hex = None
@@ -955,7 +955,7 @@ def find_bytes(
             except Exception:
                 pass
             
-            # 获取函数信息
+            # get function info
             func_name = None
             try:
                 f = ida_funcs.get_func(found)
@@ -990,7 +990,7 @@ def find_bytes(
 
 
 # ============================================================================
-# 基本块
+# Basic blocks
 # ============================================================================
 
 @tool
@@ -1009,7 +1009,7 @@ def get_basic_blocks(
     blocks: List[dict] = []
     
     try:
-        # 使用 FlowChart 获取基本块
+        # use FlowChart to get basic blocks
         fc = ida_gdl.FlowChart(f)
         
         for block in fc:
@@ -1019,7 +1019,7 @@ def get_basic_blocks(
                 "size": block.end_ea - block.start_ea,
             }
             
-            # 获取前驱
+            # get predecessors
             preds: List[str] = []
             try:
                 for i in range(block.npred):  # type: ignore
@@ -1029,7 +1029,7 @@ def get_basic_blocks(
                 pass
             block_info["predecessors"] = preds
             
-            # 获取后继
+            # get successors
             succs: List[str] = []
             try:
                 for i in range(block.nsucc):  # type: ignore
@@ -1039,7 +1039,7 @@ def get_basic_blocks(
                 pass
             block_info["successors"] = succs
             
-            # 块类型
+            # block type
             try:
                 block_info["type"] = block.type
             except Exception:
@@ -1049,7 +1049,7 @@ def get_basic_blocks(
     except Exception as e:
         return {"error": f"failed to get basic blocks: {e}", "query": addr}
     
-    # 按起始地址排序
+    # sort by start address
     blocks.sort(key=lambda x: int(x['start_ea'], 16))
     
     return {

@@ -10,6 +10,7 @@ from pygments.lexers import get_lexer_for_filename, ClassNotFound, TextLexer
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QColor,
+    QFont,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.ui.theme import SYNTAX_TOKENS, markdown_css, mono_font
+from app.ui.theme import SYNTAX_TOKENS, markdown_css, mono_font, syntax_tokens, current_theme_mode_enum, current_palette
 
 
 _MARKDOWN_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
@@ -51,16 +52,22 @@ class _PygmentsHighlighter(QSyntaxHighlighter):
     def highlightBlock(self, text: str) -> None:
         from pygments.token import Token
 
+        # Resolve theme-aware syntax tokens
+        try:
+            tokens = syntax_tokens(current_theme_mode_enum())
+        except Exception:
+            tokens = SYNTAX_TOKENS
+
         for start, tokentype, value in self._lexer.get_tokens_unprocessed(text):
             if tokentype in (Token.Text, Token.Text.Whitespace, Token):
                 continue
             token_str = str(tokentype)
-            for suffix, (color, bold) in SYNTAX_TOKENS.items():
+            for suffix, (color, bold) in tokens.items():
                 if token_str.startswith(suffix):
                     fmt = QTextCharFormat()
                     fmt.setForeground(QColor(color))
                     if bold:
-                        fmt.setFontWeight(75)
+                        fmt.setFontWeight(QFont.Weight.Bold)
                     self.setFormat(start, len(value), fmt)
                     break
 
@@ -228,7 +235,14 @@ class CodeViewWidget(QWidget):
 
     def _render_preview(self) -> None:
         html = _render_markdown(self._editor.toPlainText())
-        self._preview.setHtml(_MD_HTML_TEMPLATE.format(css=markdown_css(), body=html))
+
+        # Resolve the active theme mode so the markdown CSS adapts to dark/light
+        try:
+            css = markdown_css(current_palette())
+        except Exception:
+            css = markdown_css()
+
+        self._preview.setHtml(_MD_HTML_TEMPLATE.format(css=css, body=html))
 
     # ------------------------------------------------------------------
     # Save
