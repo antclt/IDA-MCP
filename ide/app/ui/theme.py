@@ -157,7 +157,7 @@ def markdown_css(palette: _Palette | None = None, metrics: _Metrics | None = Non
     c = palette
     m = metrics
     return f"""\
-body {{ font-family: {m.font_family}; font-size: {m.font_size_md}; color: {c.text_primary}; margin: {m.spacing_xl}; }}
+body {{ font-family: {m.font_family}; font-size: {m.font_size_md}; color: {c.text_primary}; margin: 0; }}
 pre, code {{ font-family: {m.mono_family}; }}
 pre {{ font-size: 13px; background: {c.sidebar_bg}; color: {c.text_primary}; padding: {m.spacing_lg}; border: 1px solid {c.border}; border-radius: {m.radius_md}; overflow-x: auto; }}
 code {{ background: {c.sidebar_bg}; color: {c.text_primary}; padding: 1px {m.spacing_xs}; border-radius: {m.radius_xs}; }}
@@ -1277,8 +1277,6 @@ class Theme:
             background: {c.border_light};
             border: 1px solid {c.border};
             border-radius: {m.radius_lg};
-            margin-left: {m.spacing_4xl};
-            margin-right: {m.spacing_4xl};
         }}
         QLabel#toolTraceTool {{
             color: {c.text_secondary};
@@ -1300,8 +1298,6 @@ class Theme:
             background: {c.border_light};
             border: 1px solid {c.border};
             border-radius: {m.radius_lg};
-            margin-left: {m.spacing_4xl};
-            margin-right: {m.spacing_4xl};
         }}
         QFrame#toolCallCard:hover {{
             border-color: {c.accent};
