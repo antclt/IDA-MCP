@@ -132,7 +132,7 @@ def build_command(
         "pytest",
     ]
     for mod in _NOFOLLOW_MODULES:
-        command.append(f"--nofollow-module={mod}")
+        command.append(f"--nofollow-import-to={mod}")
 
     # --- auto-track all imports (langchain, langgraph, deepagents, etc.) ---
     command.append("--follow-imports")
