@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         # --- application icon ---
         from pathlib import Path
 
-        _icon_path = Path(__file__).resolve().parents[2] / "resources" / "Sarma.png"
+        _icon_path = Path(__file__).resolve().parents[2] / "resources" / "logo.png"
         if _icon_path.exists():
             from PySide6.QtGui import QIcon
 

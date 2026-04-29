@@ -74,12 +74,13 @@ _PYSIDE6_EXTRAS = [
 def _resolve_icon(project_root: Path) -> Path | None:
     """Resolve the application icon, preferring .ico on Windows."""
     resources = project_root / "resources"
-    ico = resources / "Sarma.ico"
-    png = resources / "Sarma.png"
-    if ico.exists():
-        return ico
-    if png.exists():
-        return png
+    for name in ("logo", "Sarma"):
+        ico = resources / f"{name}.ico"
+        png = resources / f"{name}.png"
+        if ico.exists():
+            return ico
+        if png.exists():
+            return png
     return None
 
 
