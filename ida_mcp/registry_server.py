@@ -108,7 +108,7 @@ def _find_instance_index_by_pid(pid: Any) -> Optional[int]:
     return None
 
 
-def _probe_port_alive(port: int, timeout: float = 1.0) -> bool:
+def _probe_port_alive(port: int, timeout: float = 2.0) -> bool:
     """Return True if a TCP connection to localhost:port succeeds."""
     try:
         with socket.create_connection((LOCALHOST, port), timeout=timeout):
@@ -127,14 +127,24 @@ def _reap_dead_instances() -> int:
     """
     import time as _time
 
-    _REAP_TTL_SECONDS = 5.0
+    _REAP_TTL_SECONDS = 15.0
+    _SEEN_GRACE_SECONDS = 30.0  # skip TCP probe if instance was seen this recently
     now = _time.monotonic()
-    if now - _last_reap_ts < _REAP_TTL_SECONDS:
+    if now - _last_reap_ts[0] < _REAP_TTL_SECONDS:
         return 0
 
     alive: List[Dict[str, Any]] = []
     dead: List[Dict[str, Any]] = []
+    now_epoch = _time.time()
     for entry in _instances:
+        # If the instance registered or sent a status update recently, it is
+        # alive by definition — no need for a TCP probe.  This prevents the
+        # gateway from evicting instances whose embedded MCP server briefly
+        # cannot accept connections (e.g. IDA main thread busy).
+        last_seen = entry.get("last_seen_at")
+        if last_seen and (now_epoch - float(last_seen)) < _SEEN_GRACE_SECONDS:
+            alive.append(entry)
+            continue
         port = entry.get("port")
         if isinstance(port, int) and _probe_port_alive(port):
             alive.append(entry)
@@ -452,6 +462,7 @@ async def _register_handler(request: Request) -> JSONResponse:
         return JSONResponse({"error": "missing fields"}, status_code=400)
     with _lock:
         pid = payload["pid"]
+        payload["last_seen_at"] = _now()
         existing_idx = _find_instance_index_by_pid(pid)
         previous = _instances[existing_idx] if existing_idx is not None else None
         record = _with_gateway_metadata(payload, previous)
@@ -485,6 +496,7 @@ async def _update_instance_handler(request: Request) -> JSONResponse:
             if key in {"pid", "port"}:
                 continue
             target[key] = value
+        target["last_seen_at"] = _now()
     return JSONResponse({"status": "ok"})
 
 

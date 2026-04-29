@@ -441,10 +441,8 @@ def set_local_variable_type(
     if not f:
         return {"error": "function not found"}
     
-    try:
-        cfunc = ida_hexrays.decompile(f.start_ea)
-    except Exception as e:
-        return {"error": f"decompile failed: {e}"}
+    from .api_analysis import _decompile_silent
+    cfunc = _decompile_silent(f.start_ea)
     if not cfunc:
         return {"error": "decompile returned None"}
     
