@@ -10,10 +10,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+_IS_WINDOWS = platform.system() == "Windows"
+_IS_LINUX = platform.system() == "Linux"
+_IS_MACOS = platform.system() == "Darwin"
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +99,7 @@ def build_command(
     launcher = project_root / "launcher.py"
     output_dir = ensure_directory(get_nuitka_output_root())
 
-    # --- core flags --------------------------------------------------------
+    # --- core flags (platform-agnostic) ------------------------------------
     command: list[str] = [
         sys.executable,
         "-m",
@@ -102,11 +107,18 @@ def build_command(
         "--onefile" if onefile else "--standalone",
         "--assume-yes-for-downloads",
         "--enable-plugin=pyside6",
-        "--msvc=latest",
-        "--windows-console-mode=disable",
         f"--output-filename={launcher.stem}",
         f"--output-dir={output_dir}",
     ]
+
+    # --- platform-specific compiler flags ----------------------------------
+    if _IS_WINDOWS:
+        command.append("--msvc=latest")
+        command.append("--windows-console-mode=disable")
+    elif _IS_LINUX:
+        command.append("--linux-console-mode=disable")
+    elif _IS_MACOS:
+        command.append("--macos-disable-console")
 
     # --- package includes --------------------------------------------------
     for pkg in _INCLUDE_PACKAGES:
@@ -125,15 +137,20 @@ def build_command(
     if resources_root.exists() and any(resources_root.iterdir()):
         command.append(f"--include-data-dir={resources_root}=resources")
 
-    # --- Windows application metadata --------------------------------------
+    # --- platform-specific application icon --------------------------------
     app_icon = _resolve_icon(project_root)
     if app_icon is not None:
-        if app_icon.suffix == ".ico":
-            command.append(f"--windows-icon-from-ico={app_icon}")
-        elif app_icon.suffix == ".png":
-            # Nuitka also accepts PNG via --windows-icon-from-ico in recent
-            # versions, but the canonical flag is --windows-icon-from-png.
-            command.append(f"--windows-icon-from-ico={app_icon}")
+        if _IS_WINDOWS:
+            if app_icon.suffix == ".ico":
+                command.append(f"--windows-icon-from-ico={app_icon}")
+            elif app_icon.suffix == ".png":
+                command.append(f"--windows-icon-from-ico={app_icon}")
+        elif _IS_LINUX:
+            if app_icon.suffix == ".png":
+                command.append(f"--linux-icon={app_icon}")
+        elif _IS_MACOS:
+            if app_icon.suffix == ".png":
+                command.append(f"--macos-app-icon={app_icon}")
 
     # --- optional flags ----------------------------------------------------
     if no_debug:

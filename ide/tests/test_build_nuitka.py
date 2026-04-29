@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import platform
 from pathlib import Path
 
 
@@ -13,14 +14,30 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 build_command = _MODULE.build_command
 
+_IS_WINDOWS = platform.system() == "Windows"
+_IS_LINUX = platform.system() == "Linux"
+_IS_MACOS = platform.system() == "Darwin"
+
 
 def test_build_command_defaults_to_standalone() -> None:
     command = build_command()
 
     assert "--standalone" in command
     assert "--enable-plugin=pyside6" in command
-    assert "--msvc=latest" in command
-    assert "--windows-console-mode=disable" in command
+
+
+def test_build_command_platform_compiler_flags() -> None:
+    command = build_command()
+
+    if _IS_WINDOWS:
+        assert "--msvc=latest" in command
+        assert "--windows-console-mode=disable" in command
+    elif _IS_LINUX:
+        assert "--msvc=latest" not in command
+        assert "--linux-console-mode=disable" in command
+    elif _IS_MACOS:
+        assert "--msvc=latest" not in command
+        assert "--macos-disable-console" in command
 
 
 def test_build_command_supports_onefile() -> None:
