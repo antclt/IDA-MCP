@@ -47,19 +47,7 @@ _INCLUDE_PACKAGES = [
     "app",
     "shared",
     "supervisor",
-]
-
-# Modules that heavy dependencies drag in but the IDE never uses.
-_NOINCLUDE_MODULES = [
-    # langchain / langgraph / deepagents are needed by the chat runtime
-    # — do NOT exclude them.
-    "numpy",
-    "pandas",
-    "scipy",
-    "matplotlib",
-    "huggingface_hub",
-    "torch",
-    "tensorflow",
+    "bootstrap",
 ]
 
 # PySide6 sub-modules that are commonly needed at runtime.
@@ -129,9 +117,8 @@ def build_command(
     for mod in _PYSIDE6_EXTRAS:
         command.append(f"--include-module={mod}")
 
-    # --- module excludes (trim unused transitive deps) ---------------------
-    for mod in _NOINCLUDE_MODULES:
-        command.append(f"--nofollow-import-to={mod}")
+    # --- auto-track all imports (langchain, langgraph, deepagents, etc.) ---
+    command.append("--follow-imports")
 
     # --- bundled resources -------------------------------------------------
     resources_root = get_resources_root()
