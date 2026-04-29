@@ -23,7 +23,7 @@ from shared.paths import ensure_directory, get_ide_user_config_root
 
 DATABASE_FILENAME = "ide.db"
 
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 7
 
 
 def _coerce(value: str, target_type: type) -> Any:
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS model_providers (
     api_key     TEXT    NOT NULL DEFAULT '',
     api_mode    TEXT    NOT NULL DEFAULT 'openai_compatible',
     model_name  TEXT    NOT NULL DEFAULT '',
+    max_context_tokens INTEGER NOT NULL DEFAULT 0,
     top_p       REAL    NOT NULL DEFAULT 1.0,
     temperature REAL    NOT NULL DEFAULT 0.7,
     enabled     INTEGER NOT NULL DEFAULT 1
@@ -118,6 +119,7 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     tool_name        TEXT,
     tool_call_id     TEXT,
     metadata_json    TEXT,
+    reasoning_content TEXT   NOT NULL DEFAULT '',
     created_at       TEXT    NOT NULL DEFAULT ''
 );
 
@@ -299,6 +301,20 @@ class DatabaseStore:
                     (str(_SCHEMA_VERSION),),
                 )
                 conn.commit()
+            # Seed default MCP server on first init
+            self._seed_default_mcp_server(conn)
+
+    def _seed_default_mcp_server(self, conn: sqlite3.Connection) -> None:
+        """Insert the default IDA-MCP HTTP server if the table is empty."""
+        count = conn.execute("SELECT COUNT(*) FROM mcp_servers").fetchone()[0]
+        if count == 0:
+            conn.execute(
+                """INSERT INTO mcp_servers
+                (name, transport, enabled, url)
+                VALUES (?, ?, ?, ?)""",
+                ("IDA-MCP", "http", 1, "http://127.0.0.1:11338/mcp"),
+            )
+            conn.commit()
 
     def _migrate(self, conn: sqlite3.Connection, old: int, new: int) -> None:
         """Run incremental schema migrations."""
@@ -352,6 +368,18 @@ class DatabaseStore:
             ):
                 if col not in cols:
                     conn.execute(f"ALTER TABLE skills ADD COLUMN {col} {spec}")
+
+        if old < 6:
+            # v5→v6: add reasoning_content for thinking-mode LLMs (DeepSeek-R1 etc.)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(conversation_messages)").fetchall()}
+            if "reasoning_content" not in cols:
+                conn.execute("ALTER TABLE conversation_messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''")
+
+        if old < 7:
+            # v6→v7: per-model context budget for history compaction.
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(model_providers)").fetchall()}
+            if "max_context_tokens" not in cols:
+                conn.execute("ALTER TABLE model_providers ADD COLUMN max_context_tokens INTEGER NOT NULL DEFAULT 0")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path))

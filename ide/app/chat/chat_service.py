@@ -186,8 +186,9 @@ class ChatServiceWorker(QObject):
             system_prompt=system_prompt,
         )
 
-        # Accumulate assistant content
+        # Accumulate assistant content and reasoning content (thinking-mode LLMs)
         assistant_content = ""
+        reasoning_content = ""
 
         # Track tool calls for persistence (tool_call_id → ChatMessage).
         # Using tool_call_id (unique per invocation) instead of tool_name
@@ -200,7 +201,9 @@ class ChatServiceWorker(QObject):
 
             # Prepare input messages for LangGraph
             input_messages = self._build_input_messages(
-                history, user_message
+                history,
+                user_message,
+                max_context_tokens=provider.max_context_tokens,
             )
 
             # Stream agent execution
@@ -226,6 +229,16 @@ class ChatServiceWorker(QObject):
                     continue
 
                 mode, data = event_bundle[0], event_bundle[1]
+
+                # Extract reasoning_content from thinking-mode LLMs (DeepSeek-R1 etc.)
+                if mode == "messages":
+                    msg = data[0] if isinstance(data, tuple) and len(data) > 0 else None
+                    if msg is not None:
+                        rc = getattr(msg, "reasoning_content", None)
+                        if not rc and hasattr(msg, "additional_kwargs"):
+                            rc = msg.additional_kwargs.get("reasoning_content")
+                        if rc and isinstance(rc, str):
+                            reasoning_content += rc
 
                 stream_events = normalize_langgraph_events(
                     mode, data, conversation_id, turn_id
@@ -255,9 +268,11 @@ class ChatServiceWorker(QObject):
                                 turn_id=turn_id,
                                 role="assistant",
                                 content=assistant_content,
+                                reasoning_content=reasoning_content or None,
                             )
                             self._persistence.save_message(seg_msg)
                             assistant_content = ""
+                            reasoning_content = ""
 
                         # Persist tool call start
                         tool_name = stream_event.payload.get("tool_name", "")
@@ -321,6 +336,7 @@ class ChatServiceWorker(QObject):
                     turn_id=turn_id,
                     role="assistant",
                     content=assistant_content,
+                    reasoning_content=reasoning_content or None,
                 )
                 self._persistence.save_message(assistant_msg)
 
@@ -350,9 +366,16 @@ class ChatServiceWorker(QObject):
 
         except Exception as exc:
             logger.exception("Unexpected error during agent run")
+            error_text = str(exc)
+            if exc.__class__.__name__ == "GraphRecursionError":
+                error_text = (
+                    f"Agent stopped after reaching the step limit "
+                    f"({run_config.max_steps}). Try asking a narrower question "
+                    "or increase the agent step limit."
+                )
             self._emit(
                 make_run_failed_event(
-                    conversation_id, turn_id, str(exc), assistant_content
+                    conversation_id, turn_id, error_text, assistant_content
                 )
             )
             self._persistence.update_conversation_by_pk(
@@ -422,16 +445,106 @@ class ChatServiceWorker(QObject):
 
     @staticmethod
     def _build_input_messages(
-        history: list[ChatMessage], user_message: str
-    ) -> list[dict[str, Any]]:
+        history: list[ChatMessage],
+        user_message: str,
+        max_context_tokens: int = 0,
+    ) -> list[Any]:
         """Build langchain-compatible message list from history + new message."""
-        messages: list[dict[str, Any]] = []
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        messages: list[Any] = []
+        compacted_summary, history = ChatServiceWorker._compact_history(
+            history, user_message, max_context_tokens
+        )
+
+        if compacted_summary:
+            messages.append(SystemMessage(content=compacted_summary))
 
         for msg in history:
             messages.append(msg.to_langchain_message())
 
-        messages.append({"role": "user", "content": user_message})
+        messages.append(HumanMessage(content=user_message))
         return messages
+
+    @staticmethod
+    def _compact_history(
+        history: list[ChatMessage],
+        user_message: str,
+        max_context_tokens: int,
+    ) -> tuple[str | None, list[ChatMessage]]:
+        """Keep recent history within the configured context budget.
+
+        ``max_context_tokens <= 0`` means no compaction.  Token counting is an
+        intentionally conservative approximation so this works without
+        provider-specific tokenizers.
+        """
+        if max_context_tokens <= 0 or not history:
+            return None, history
+
+        # Leave room for the system prompt, tool schemas, model output, and
+        # tokenizer variance.  The retained chat history gets the rest.
+        budget = max(512, int(max_context_tokens * 0.55))
+        used = ChatServiceWorker._estimate_text_tokens(user_message) + 8
+        kept: list[ChatMessage] = []
+        omitted: list[ChatMessage] = []
+
+        for msg in reversed(history):
+            cost = ChatServiceWorker._estimate_message_tokens(msg)
+            if used + cost > budget:
+                omitted.append(msg)
+                continue
+            kept.append(msg)
+            used += cost
+
+        kept.reverse()
+        omitted.reverse()
+
+        # Avoid replaying orphan tool messages if compaction cut off the
+        # corresponding assistant tool-call request.
+        while kept and kept[0].role == "tool":
+            omitted.append(kept.pop(0))
+
+        if not omitted:
+            return None, kept
+
+        summary = ChatServiceWorker._build_compaction_summary(omitted)
+        return summary, kept
+
+    @staticmethod
+    def _estimate_message_tokens(msg: ChatMessage) -> int:
+        text = msg.content or ""
+        if msg.reasoning_content:
+            text += "\n" + msg.reasoning_content
+        if msg.tool_name:
+            text += "\n" + msg.tool_name
+        return ChatServiceWorker._estimate_text_tokens(text) + 8
+
+    @staticmethod
+    def _estimate_text_tokens(text: str) -> int:
+        return max(1, (len(text) + 3) // 4)
+
+    @staticmethod
+    def _build_compaction_summary(messages: list[ChatMessage]) -> str:
+        lines = [
+            "Earlier conversation was compacted to fit the model context.",
+            "Use this summary as background; ask for details if needed.",
+        ]
+        char_budget = 3000
+        used = sum(len(line) for line in lines)
+        for msg in messages:
+            role = msg.role
+            if msg.tool_name:
+                role = f"{role}:{msg.tool_name}"
+            content = " ".join((msg.content or "").split())
+            if not content:
+                continue
+            line = f"- {role}: {content[:400]}"
+            if used + len(line) > char_budget:
+                lines.append("- ... additional older messages omitted ...")
+                break
+            lines.append(line)
+            used += len(line)
+        return "\n".join(lines)
 
     @staticmethod
     def _infer_title(user_message: str, assistant_content: str) -> str:

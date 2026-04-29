@@ -143,6 +143,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self._settings_view.language_changed.connect(self._set_language)
         self._settings_view.theme_changed.connect(self._on_theme_changed)
+        self._settings_view.model_providers_changed.connect(self._chat_page.refresh_providers)
         self._retranslate_ui()
         self._apply_mode("chat")
         self._apply_theme()
@@ -502,12 +503,13 @@ class MainWindow(QMainWindow):
         self._chat_page.retranslate()
 
     def _apply_theme(self) -> None:
-        from app.ui.theme import Theme, ThemeMode
+        from app.ui.theme import Theme, ThemeMode, apply_app_palette
 
         mode_str = getattr(self, "_theme_mode", None) or "light"
         mode = ThemeMode.LIGHT if mode_str == "light" else ThemeMode.DARK
         self._theme_mode = mode_str
         self.setStyleSheet(Theme(mode).stylesheet())
+        apply_app_palette(mode)
         self._refresh_sidebar_icons()
 
     def _on_theme_changed(self, theme_mode: str) -> None:

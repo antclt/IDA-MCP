@@ -560,6 +560,7 @@ class MessageList(QWidget):
         self._messages_layout.addStretch(1)
 
         container = QWidget()
+        container.setObjectName("messageListContainer")
         container.setLayout(self._messages_layout)
 
         self._scroll = QScrollArea()

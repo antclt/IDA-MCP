@@ -12,6 +12,124 @@ from app.chat.models import AgentRunConfig, ResolvedSkill
 logger = logging.getLogger(__name__)
 
 
+def _extract_reasoning_content(data: Any) -> str | None:
+    """Return provider-specific reasoning_content from OpenAI-like payloads."""
+    if not isinstance(data, dict):
+        return None
+
+    value = data.get("reasoning_content")
+    if not isinstance(value, str):
+        value = data.get("reasoning")
+    if isinstance(value, str):
+        return value
+
+    extra = data.get("model_extra")
+    if isinstance(extra, dict):
+        value = extra.get("reasoning_content") or extra.get("reasoning")
+        if isinstance(value, str):
+            return value
+
+    return None
+
+
+class ReasoningChatOpenAIMixin:
+    """Preserve reasoning_content for OpenAI-compatible thinking models.
+
+    Several OpenAI-compatible providers return a non-standard
+    ``reasoning_content`` field and require it to be sent back when a tool call
+    is followed by another model call.  LangChain's generic ChatOpenAI drops
+    that field, so we patch both streaming/non-streaming reads and request
+    serialization here.
+    """
+
+    def _create_chat_result(
+        self, response: Any, generation_info: dict[str, Any] | None = None
+    ) -> Any:
+        result = super()._create_chat_result(response, generation_info)
+        if isinstance(response, dict):
+            response_dict = response
+        elif hasattr(response, "model_dump"):
+            response_dict = response.model_dump(exclude_none=False)
+        else:
+            response_dict = response.dict()
+        choices = response_dict.get("choices") or []
+        for index, choice in enumerate(choices):
+            if index >= len(result.generations):
+                break
+            rc = _extract_reasoning_content(choice.get("message", {}))
+            if rc is not None:
+                result.generations[index].message.additional_kwargs[
+                    "reasoning_content"
+                ] = rc
+        return result
+
+    def _convert_chunk_to_generation_chunk(
+        self,
+        chunk: dict[str, Any],
+        default_chunk_class: type,
+        base_generation_info: dict[str, Any] | None,
+    ) -> Any:
+        generation_chunk = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info
+        )
+        if generation_chunk is None:
+            return None
+
+        choices = chunk.get("choices") or chunk.get("chunk", {}).get("choices", [])
+        first_choice = choices[0] if choices and isinstance(choices[0], dict) else {}
+        if first_choice:
+            rc = _extract_reasoning_content(first_choice.get("delta", {}))
+            if rc is not None:
+                generation_chunk.message.additional_kwargs[
+                    "reasoning_content"
+                ] = rc
+        return generation_chunk
+
+    def _get_request_payload(
+        self, input_: Any, *, stop: list[str] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        msg_dicts = payload.get("messages")
+        if not isinstance(msg_dicts, list):
+            return payload
+
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        messages = self._convert_input(input_).to_messages()
+        if len(msg_dicts) != len(messages):
+            logger.warning(
+                "Cannot preserve reasoning_content: payload message count %d "
+                "does not match input message count %d",
+                len(msg_dicts),
+                len(messages),
+            )
+            return payload
+
+        last_user_idx = -1
+        for idx, msg in enumerate(messages):
+            if isinstance(msg, HumanMessage):
+                last_user_idx = idx
+
+        for idx, (orig, msg_dict) in enumerate(zip(messages, msg_dicts)):
+            if not isinstance(orig, AIMessage) or not isinstance(msg_dict, dict):
+                continue
+            rc = orig.additional_kwargs.get("reasoning_content")
+            if rc is not None and idx > last_user_idx:
+                msg_dict["reasoning_content"] = rc
+            else:
+                msg_dict.pop("reasoning_content", None)
+        return payload
+
+
+def _reasoning_chat_openai_class() -> type:
+    from langchain_openai import ChatOpenAI
+
+    class ReasoningChatOpenAI(ReasoningChatOpenAIMixin, ChatOpenAI):
+        pass
+
+    return ReasoningChatOpenAI
+
+
 def _build_openai_model(
     *,
     model_name: str,
@@ -20,7 +138,7 @@ def _build_openai_model(
     temperature: float,
     top_p: float,
 ) -> Any:
-    from langchain_openai import ChatOpenAI
+    ReasoningChatOpenAI = _reasoning_chat_openai_class()
 
     kwargs: dict[str, Any] = {
         "model": model_name,
@@ -31,7 +149,31 @@ def _build_openai_model(
         kwargs["api_key"] = api_key
     if base_url:
         kwargs["base_url"] = base_url
-    return ChatOpenAI(**kwargs)
+    return ReasoningChatOpenAI(**kwargs)
+
+
+def _build_openai_responses_model(
+    *,
+    model_name: str,
+    api_key: str,
+    base_url: str,
+    temperature: float,
+    top_p: float,
+) -> Any:
+    ReasoningChatOpenAI = _reasoning_chat_openai_class()
+
+    kwargs: dict[str, Any] = {
+        "model": model_name,
+        "temperature": temperature,
+        "top_p": top_p,
+        "use_responses_api": True,
+        "output_version": "responses/v1",
+    }
+    if api_key:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+    return ReasoningChatOpenAI(**kwargs)
 
 
 def _build_anthropic_model(
@@ -58,7 +200,7 @@ def _build_anthropic_model(
 
 # Maps api_mode → builder function.
 _MODEL_BUILDERS: dict[str, Any] = {
-    "openai_responses": _build_openai_model,
+    "openai_responses": _build_openai_responses_model,
     "openai_compatible": _build_openai_model,
     "anthropic": _build_anthropic_model,
 }

@@ -74,14 +74,19 @@ SYNTAX_TOKENS = SYNTAX_TOKENS_LIGHT
 def current_theme_mode() -> str:
     """Return the active theme mode string ("light" or "dark").
 
-    Centralizes the ``QApplication -> activeWindow -> _theme_mode``
-    lookup that was previously duplicated in 4+ locations.
+    Walks all top-level windows to find the MainWindow so that modal
+    dialogs (which become activeWindow) do not cause incorrect lookups.
     Falls back to "light" if no window is available.
     """
     try:
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QMainWindow
+
         app = QApplication.instance()
         if app:
+            for w in app.topLevelWidgets():
+                if isinstance(w, QMainWindow) and hasattr(w, "_theme_mode"):
+                    return getattr(w, "_theme_mode", "light")
+            # Fallback to activeWindow for non-MainWindow cases
             mw = app.activeWindow()
             return getattr(mw, "_theme_mode", "light") if mw else "light"
     except Exception:
@@ -97,6 +102,39 @@ def current_theme_mode_enum() -> ThemeMode:
 def current_palette() -> _Palette:
     """Return the palette for the current theme mode."""
     return Theme(current_theme_mode_enum())._palette
+
+
+def apply_app_palette(mode: ThemeMode | None = None) -> None:
+    """Set the QApplication palette so widgets without QSS rules
+    fall back to the theme colours instead of the system palette."""
+    try:
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QPalette, QColor
+
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        if mode is None:
+            mode = current_theme_mode_enum()
+        c = Theme(mode)._palette
+
+        palette = QPalette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(c.window_bg))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(c.text_primary))
+        palette.setColor(QPalette.ColorRole.Base, QColor(c.input_bg))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(c.panel_bg))
+        palette.setColor(QPalette.ColorRole.Text, QColor(c.text_primary))
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(c.text_secondary))
+        palette.setColor(QPalette.ColorRole.Button, QColor(c.button_bg))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(c.button_text))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(c.accent))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(c.accent_text))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(c.panel_bg))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(c.text_primary))
+        app.setPalette(palette)
+    except Exception:
+        pass
 
 
 def syntax_tokens(mode: ThemeMode | None = None) -> dict[str, tuple[str, bool]]:
@@ -416,6 +454,16 @@ class Theme:
             background: {c.window_bg};
         }}
 
+        /* ---- Settings stack (right-side pages) ---- */
+        QStackedWidget#settingsStack {{
+            background: {c.window_bg};
+        }}
+
+        /* ---- Settings page content (inside scroll area) ---- */
+        QWidget#settingsPageContent {{
+            background: {c.window_bg};
+        }}
+
         /* ---- Status content ---- */
         QWidget#statusContent {{
             background: {c.window_bg};
@@ -586,7 +634,7 @@ class Theme:
     def _input_styles(c: _Palette, m: _Metrics) -> str:
         return f"""
         /* ---- Inputs ---- */
-        QTreeWidget, QTextEdit, QLineEdit, QListWidget, QSpinBox, QComboBox, QTableWidget {{
+        QTreeWidget, QTextEdit, QLineEdit, QListWidget, QSpinBox, QDoubleSpinBox, QComboBox, QTableWidget {{
             background: {c.input_bg};
             color: {c.text_primary};
             border: 1px solid {c.border};
@@ -596,10 +644,23 @@ class Theme:
             selection-color: {c.accent_text};
             font-size: {m.font_size_base};
         }}
-        QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
+        QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
             border: 2px solid {c.accent};
             padding: 5px 7px;
             background: {c.accent_subtle};
+        }}
+        QComboBox QAbstractItemView {{
+            background: {c.input_bg};
+            color: {c.text_primary};
+            border: 1px solid {c.border};
+            selection-background-color: {c.accent};
+            selection-color: {c.accent_text};
+            min-height: 150px;
+        }}
+        QComboBox::drop-down {{
+            background: transparent;
+            border: none;
+            width: 20px;
         }}
         QLineEdit:read-only {{
             background: {c.border_light};
@@ -859,12 +920,16 @@ class Theme:
 
     @staticmethod
     def _scrollarea_styles(c: _Palette, m: _Metrics) -> str:  # noqa: ARG004
-        return """
+        return f"""
         /* ---- Scroll area ---- */
-        QScrollArea {
+        QScrollArea {{
             border: none;
             background: transparent;
-        }"""
+        }}
+        QScrollArea#settingsScrollArea,
+        QScrollArea#settingsScrollArea::viewport {{
+            background: {c.window_bg};
+        }}"""
 
     # -- Scrollbar --
 
@@ -1121,7 +1186,8 @@ class Theme:
         return f"""
         /* ---- Model provider / MCP server dialog ---- */
         QDialog#modelProviderDialog,
-        QDialog#mcpServerDialog {{
+        QDialog#mcpServerDialog,
+        QDialog#mcpServerDetailDialog {{
             background: {c.panel_bg};
         }}
         QLabel#dialogSectionTitle {{
@@ -1149,6 +1215,9 @@ class Theme:
         QScrollArea#chatScrollArea {{
             background: {c.panel_bg};
             border: none;
+        }}
+        QWidget#messageListContainer {{
+            background: {c.panel_bg};
         }}
         QFrame#chatTurnDivider {{
             background: {c.border_light};
@@ -1525,6 +1594,9 @@ class Theme:
             background: {c.panel_bg};
             border: none;
             border-left: 1px solid {c.border};
+        }}
+        QWidget#traceListContainer {{
+            background: {c.panel_bg};
         }}
         QFrame#tracePanelHeader {{
             background: {c.header_bg};

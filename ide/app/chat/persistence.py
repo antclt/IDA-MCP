@@ -114,6 +114,7 @@ class ChatPersistence:
             tool_name=msg.tool_name or "",
             tool_call_id=msg.tool_call_id or "",
             metadata_json=msg.metadata_json or "",
+            reasoning_content=msg.reasoning_content or "",
             created_at=msg.created_at,
         )
         return msg.id

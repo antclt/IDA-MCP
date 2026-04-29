@@ -20,7 +20,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.ui.settings.widgets import NoWheelComboBox, NoWheelDoubleSpinBox
+from app.ui.settings.widgets import (
+    NoWheelComboBox,
+    NoWheelDoubleSpinBox,
+    NoWheelSpinBox,
+)
 
 
 class ModelProviderDialog(QDialog):
@@ -116,6 +120,17 @@ class ModelProviderDialog(QDialog):
         self._temp_spin.setValue(0.7)
         layout.addWidget(self._temp_spin)
 
+        layout.addSpacing(2)
+        layout.addWidget(self._field_label(self._t("settings.field.model_context")))
+        self._context_spin = NoWheelSpinBox()
+        self._context_spin.setRange(0, 2_000_000)
+        self._context_spin.setSingleStep(8192)
+        self._context_spin.setSpecialValueText(
+            self._t("settings.model.context.unlimited")
+        )
+        self._context_spin.setValue(0)
+        layout.addWidget(self._context_spin)
+
         layout.addWidget(self._separator())
         layout.addSpacing(4)
 
@@ -143,6 +158,7 @@ class ModelProviderDialog(QDialog):
             self._base_url_edit.setText(self._provider.base_url or "")
             self._api_key_edit.setText(self._provider.api_key or "")
             self._model_id_edit.setText(self._provider.model_name or "")
+            self._context_spin.setValue(self._provider.max_context_tokens)
             self._top_p_spin.setValue(self._provider.top_p)
             self._temp_spin.setValue(self._provider.temperature)
             # Set api_mode combo
@@ -159,6 +175,7 @@ class ModelProviderDialog(QDialog):
             "api_key": self._api_key_edit.text().strip(),
             "api_mode": self._api_mode_combo.currentData() or "openai_compatible",
             "model_name": self._model_id_edit.text().strip(),
+            "max_context_tokens": self._context_spin.value(),
             "top_p": self._top_p_spin.value(),
             "temperature": self._temp_spin.value(),
             # enabled is controlled from the card toggle, not the dialog.

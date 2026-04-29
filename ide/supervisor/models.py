@@ -296,6 +296,7 @@ class ModelProvider:
     api_key: str = ""
     api_mode: str = API_MODE_OPENAI_COMPATIBLE
     model_name: str = ""
+    max_context_tokens: int = 0
     top_p: float = 1.0
     temperature: float = 0.7
     enabled: bool = True

@@ -124,6 +124,10 @@ class ChatPage(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def refresh_providers(self) -> None:
+        """Refresh the provider selector after model providers change."""
+        self._refresh_models()
+
     def retranslate(self) -> None:
         """Refresh all translatable text after a language change."""
         self._sidebar.retranslate()

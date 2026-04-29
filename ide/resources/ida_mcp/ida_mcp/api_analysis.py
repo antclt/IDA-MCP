@@ -30,6 +30,7 @@ try:
     import ida_hexrays  # type: ignore
     import ida_search  # type: ignore
     import ida_gdl  # type: ignore
+    import ida_auto  # type: ignore
 except ImportError:
     idaapi = None
     idautils = None
@@ -38,6 +39,7 @@ except ImportError:
     ida_hexrays = None
     ida_search = None
     ida_gdl = None
+    ida_auto = None
 
 from . import compat  # IDA 8.x/9.x compatibility layer
 
@@ -93,15 +95,24 @@ def _init_hexrays() -> Optional[str]:
     return None
 
 
+def _decompile_silent(ea: int) -> Any:
+    """Decompile with dialog suppression (segment read-only warnings, etc.)."""
+    try:
+        old = ida_auto.set_query_graph(0) if ida_auto else 0
+        cfunc = ida_hexrays.decompile(ea)
+        if ida_auto:
+            ida_auto.set_query_graph(old)
+        return cfunc
+    except Exception:
+        return None
+
+
 def _decompile_cfunc(info: dict) -> tuple[Any, Optional[str]]:
     hexrays_error = _init_hexrays()
     if hexrays_error:
         return None, hexrays_error
 
-    try:
-        cfunc = ida_hexrays.decompile(info["start_ea"])
-    except Exception as exc:
-        return None, f"decompile failed: {exc}"
+    cfunc = _decompile_silent(info["start_ea"])
     if not cfunc:
         return None, "decompile returned None"
     return cfunc, None

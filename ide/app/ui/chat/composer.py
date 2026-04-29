@@ -67,13 +67,9 @@ class Composer(QWidget):
         # Selectors are added by ChatPage via add_selector()
         self._selector_widgets: list[QWidget] = []
 
-        # Clear button (icon only, placed after selectors, before stretch)
-        self._clear_button = QPushButton()
-        self._clear_button.setIcon(
-            self.style().standardIcon(QStyle.StandardPixmap.SP_DialogResetButton)
-        )
+        # Clear button (text label, placed after selectors, before stretch)
+        self._clear_button = QPushButton(self._t("chat.clear"))
         self._clear_button.setObjectName("chatClearButton")
-        self._clear_button.setFixedSize(28, 28)
         self._clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._clear_button.setToolTip(self._t("chat.clear"))
         self._clear_button.clicked.connect(self.clear_requested.emit)

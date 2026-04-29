@@ -58,6 +58,7 @@ from app.ui.settings.workers import (
 class SettingsPage(QWidget):
     language_changed = Signal(str)
     theme_changed = Signal(str)  # "light" | "dark"
+    model_providers_changed = Signal()
 
     def __init__(
         self,
@@ -205,6 +206,7 @@ class SettingsPage(QWidget):
             body_layout = QHBoxLayout(body)
             body_layout.setContentsMargins(0, 0, 0, 0)
             body_layout.setSpacing(0)
+            self._stack.setObjectName("settingsStack")
             body_layout.addWidget(self._category_list)
             body_layout.addWidget(self._stack, 1)
 
@@ -430,6 +432,11 @@ class SettingsPage(QWidget):
     def _on_theme_changed(self) -> None:
         theme_mode = self._theme_combo.currentData() or "light"
         self.theme_changed.emit(theme_mode)
+        # Persist immediately so that snapshots do not flip the theme back
+        try:
+            self._settings_service.save(ide_updates={"theme_mode": theme_mode})
+        except Exception:
+            pass
 
     def _refresh_theme_combo(self, theme_mode: str) -> None:
         self._theme_combo.blockSignals(True)
@@ -514,7 +521,7 @@ class SettingsPage(QWidget):
             )
         )
         layout.addStretch(1)
-        return widget
+        return self._wrap_scroll(widget)
 
     # ------------------------------------------------------------------
     # Model providers page
@@ -556,6 +563,7 @@ class SettingsPage(QWidget):
         values = dialog.get_values()
         self._settings_service.add_model_provider(**values)
         self._refresh_model_cards()
+        self.model_providers_changed.emit()
 
     def _edit_model_provider(self, provider_id: int) -> None:
         providers = self._settings_service.get_model_providers()
@@ -568,10 +576,12 @@ class SettingsPage(QWidget):
         values = dialog.get_values()
         self._settings_service.update_model_provider(provider_id, **values)
         self._refresh_model_cards()
+        self.model_providers_changed.emit()
 
     def _delete_model_provider(self, provider_id: int) -> None:
         self._settings_service.remove_model_provider(provider_id)
         self._refresh_model_cards()
+        self.model_providers_changed.emit()
 
     def _toggle_provider_enabled(
         self, provider_id: int, state: int, card: QFrame
@@ -711,6 +721,14 @@ class SettingsPage(QWidget):
         mid_layout.addWidget(self._detail_label(
             f"{self._t('settings.field.model_top_p')} / {self._t('settings.field.model_temperature')}",
             f"{provider.top_p:.2f} / {provider.temperature:.1f}",
+        ))
+        context_display = (
+            self._t("settings.model.context.unlimited")
+            if provider.max_context_tokens <= 0
+            else f"{provider.max_context_tokens:,}"
+        )
+        mid_layout.addWidget(self._detail_label(
+            self._t("settings.field.model_context"), context_display
         ))
         details_layout.addWidget(mid, 1)
 
@@ -882,7 +900,7 @@ class SettingsPage(QWidget):
         )
         header_layout.addWidget(toggle_btn)
 
-        edit_btn = QPushButton(self._t("settings.model.dialog.edit"))
+        edit_btn = QPushButton(self._t("settings.mcp.dialog.edit"))
         edit_btn.setObjectName("modelCardEditButton")
         edit_btn.setFixedHeight(28)
         edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1646,7 +1664,9 @@ class SettingsPage(QWidget):
         self.language_changed.emit(language)
 
     def _wrap_scroll(self, widget: QWidget) -> QScrollArea:
+        widget.setObjectName("settingsPageContent")
         scroll = QScrollArea()
+        scroll.setObjectName("settingsScrollArea")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)

@@ -62,6 +62,7 @@ class ChatMessage:
     tool_name: str | None = None
     tool_call_id: str | None = None
     metadata_json: str | None = None
+    reasoning_content: str | None = None
     created_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,24 +75,41 @@ class ChatMessage:
         allowed = {f.name for f in cls.__dataclass_fields__.values()}
         return cls(**{k: v for k, v in data.items() if k in allowed})
 
-    def to_langchain_message(self) -> dict[str, Any]:
-        """Convert to a langchain-compatible message dict."""
+    def to_langchain_message(self) -> Any:
+        """Convert to a langchain BaseMessage so extra fields survive."""
+        from langchain_core.messages import (
+            AIMessage,
+            HumanMessage,
+            SystemMessage,
+            ToolMessage,
+        )
+
         if self.role == "tool":
             if self.tool_call_id:
-                message = {
-                    "role": "tool",
-                    "content": self.content,
-                    "tool_call_id": self.tool_call_id,
-                }
-                if self.tool_name:
-                    message["name"] = self.tool_name
-                return message
-            return {
-                "role": "assistant",
-                "content": self._tool_history_fallback_text(),
+                return ToolMessage(
+                    content=self.content,
+                    tool_call_id=self.tool_call_id,
+                    name=self.tool_name or "",
+                )
+            return AIMessage(content=self._tool_history_fallback_text())
+
+        extra: dict[str, Any] = {}
+        # Thinking-mode LLMs (DeepSeek-R1 etc.) require reasoning_content
+        # to be passed back verbatim on subsequent calls.
+        if self.reasoning_content:
+            extra["additional_kwargs"] = {
+                "reasoning_content": self.reasoning_content
             }
 
-        return {"role": self.role, "content": self.content}
+        if self.role == "assistant":
+            return AIMessage(content=self.content, **extra)
+        if self.role == "user":
+            return HumanMessage(content=self.content)
+        if self.role == "system":
+            return SystemMessage(content=self.content)
+
+        # Fallback for unknown roles
+        return {"role": self.role, "content": self.content, **extra}
 
     def _tool_history_fallback_text(self) -> str:
         """Serialize persisted tool history without tool_call_id as plain text.
@@ -238,4 +256,6 @@ class AgentRunConfig:
     message_history: list[ChatMessage]
     user_message: str
     system_prompt: str
-    max_steps: int = 12
+    # LangGraph needs a finite recursion_limit; use a very high value so long
+    # reverse-engineering traces are effectively bounded by context/tool limits.
+    max_steps: int = 100_000
