@@ -14,7 +14,7 @@ dependencies = [
     "deepagents==0.5.3",
     "langgraph==1.1.6",
     "langchain-openai (>=1.2.1)",
-    "langchain-anthropic (>=1.4.2)",
+    "langchain-anthropic (>=1.4.3)",
     "langchain-mcp-adapters (>=0.2.2)",
     "pydantic==2.13.1",
     "pygments==2.20.0",

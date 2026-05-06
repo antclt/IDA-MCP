@@ -1419,6 +1419,10 @@ class Theme:
             font-size: {m.font_size_lg};
             font-weight: bold;
             padding: 0px;
+            min-width: 32px;
+            max-width: 32px;
+            min-height: 32px;
+            max-height: 32px;
         }}
         QPushButton#chatSendRoundButton:hover {{
             background: {c.accent_hover};
@@ -1446,6 +1450,10 @@ class Theme:
             border-radius: 14px;
             font-size: 13pt;
             padding: 0px;
+            min-width: 28px;
+            max-width: 28px;
+            min-height: 28px;
+            max-height: 28px;
         }}
         QPushButton#chatClearButton:hover {{
             background: {c.hover_bg};

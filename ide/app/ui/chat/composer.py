@@ -6,6 +6,7 @@ via `add_selector()`. The composer no longer owns a model menu.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, Qt, Signal
@@ -67,11 +68,22 @@ class Composer(QWidget):
         # Selectors are added by ChatPage via add_selector()
         self._selector_widgets: list[QWidget] = []
 
-        # Clear button (text label, placed after selectors, before stretch)
-        self._clear_button = QPushButton(self._t("chat.clear"))
+        # Clear button (icon-only round button, aligned with model selectors)
+        self._clear_button = QPushButton()
         self._clear_button.setObjectName("chatClearButton")
         self._clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._clear_button.setToolTip(self._t("chat.clear"))
+        _clear_svg = (
+            Path(__file__).resolve().parents[3] / "resources" / "icons" / "clear.svg"
+        )
+        if _clear_svg.exists():
+            from app.ui.theme import current_palette
+            from app.ui.icons import tint_svg
+
+            palette = current_palette()
+            self._clear_button.setIcon(
+                tint_svg(str(_clear_svg), palette.text_secondary, size=16)
+            )
         self._clear_button.clicked.connect(self.clear_requested.emit)
         self._bottom_layout.addWidget(self._clear_button)
 
@@ -79,7 +91,6 @@ class Composer(QWidget):
 
         self._send_button = QPushButton("\u2191")
         self._send_button.setObjectName("chatSendRoundButton")
-        self._send_button.setFixedSize(32, 32)
         self._send_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._send_button.clicked.connect(self._on_send)
         self._bottom_layout.addWidget(self._send_button)

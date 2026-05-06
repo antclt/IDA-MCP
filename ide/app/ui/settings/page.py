@@ -563,7 +563,15 @@ class SettingsPage(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         values = dialog.get_values()
-        self._settings_service.add_model_provider(**values)
+        try:
+            self._settings_service.add_model_provider(**values)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                self._t("settings.model.dialog.error_title"),
+                str(exc),
+            )
+            return
         self._refresh_model_cards()
         self.model_providers_changed.emit()
 
@@ -576,7 +584,15 @@ class SettingsPage(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         values = dialog.get_values()
-        self._settings_service.update_model_provider(provider_id, **values)
+        try:
+            self._settings_service.update_model_provider(provider_id, **values)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                self._t("settings.model.dialog.error_title"),
+                str(exc),
+            )
+            return
         self._refresh_model_cards()
         self.model_providers_changed.emit()
 

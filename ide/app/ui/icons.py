@@ -26,6 +26,26 @@ def _icon_from_path(path: QPainterPath, color: QColor, size: int = 22) -> QIcon:
     return QIcon(QPixmap.fromImage(image))
 
 
+def tint_svg(path: str, color: str | QColor, size: int = 24) -> QIcon:
+    """Load an SVG and tint every non-transparent pixel to *color*.
+
+    The original SVG colour is irrelevant — only alpha is preserved.
+    This lets theme colours drive monochrome SVG icons.
+    """
+    from PySide6.QtSvg import QSvgRenderer
+    from PySide6.QtCore import QRectF
+
+    renderer = QSvgRenderer(path)
+    img = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(img)
+    renderer.render(painter, QRectF(0, 0, size, size))
+    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.fillRect(img.rect(), QColor(color))
+    painter.end()
+    return QIcon(QPixmap.fromImage(img))
+
+
 def _chat_path() -> QPainterPath:
     bubble = QPainterPath()
     bubble.addRoundedRect(QRectF(3.0, 3.0, 16.0, 11.0), 3.0, 3.0)

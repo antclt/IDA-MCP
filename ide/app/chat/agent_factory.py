@@ -262,12 +262,12 @@ class AgentFactory:
 
         # 5. Build ReAct agent
         try:
-            from langgraph.prebuilt import create_react_agent
+            from langchain.agents import create_agent
 
-            agent = create_react_agent(
+            agent = create_agent(
                 model,
                 tools,
-                prompt=config.system_prompt,
+                system_prompt=config.system_prompt,
             )
         except Exception as exc:
             raise AgentBuildError(

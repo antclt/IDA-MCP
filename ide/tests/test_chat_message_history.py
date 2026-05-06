@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from langchain_core.messages.utils import convert_to_messages
+from langchain_core.messages import convert_to_messages
 
 from app.chat.chat_service import ChatServiceWorker
 from app.chat.models import ChatMessage

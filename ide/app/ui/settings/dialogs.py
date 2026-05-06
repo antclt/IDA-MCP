@@ -124,6 +124,7 @@ class ModelProviderDialog(QDialog):
         layout.addSpacing(2)
         layout.addWidget(self._field_label(self._t("settings.field.model_context")))
         self._context_edit = ContextTokenEdit()
+        self._context_edit.setPlaceholderText(self._t("settings.field.model_context.placeholder"))
         self._context_edit.setValue(0)
         layout.addWidget(self._context_edit)
 
