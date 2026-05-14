@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from .rpc import resource
 from .strings_cache import get_strings_cache
 from .sync import idaread
+from .type_utils import iter_local_type_ordinals
 from .utils import hex_addr
 
 try:
@@ -72,14 +73,6 @@ def _resource_detail(kind: str, **fields: Any) -> str:
     }
     payload.update(fields)
     return _json_resource(payload)
-
-
-def _first_tool_result(result: Any) -> dict[str, Any]:
-    if isinstance(result, list) and result:
-        first = result[0]
-        if isinstance(first, dict):
-            return first
-    return {"error": "empty result"}
 
 
 def _parse_addr_or_error(addr: str) -> tuple[Optional[int], Optional[str]]:
@@ -172,12 +165,7 @@ def _list_types_items() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if ida_typeinf is None or idaapi is None:
         return items
-    try:
-        qty = ida_typeinf.get_ordinal_qty()  # type: ignore[attr-defined]
-    except Exception:
-        qty = 0
-
-    for ordinal in range(1, qty + 1):
+    for ordinal in iter_local_type_ordinals(ida_typeinf):
         try:
             name = ida_typeinf.get_numbered_type_name(idaapi.cvar.idati, ordinal)  # type: ignore[attr-defined]
         except Exception:
@@ -387,9 +375,9 @@ def function_resource(addr: str) -> str:
 @resource(uri="ida://function/{addr}/decompile")
 @idaread
 def function_decompile_resource(addr: str) -> str:
-    from .api_analysis import decompile
+    from .api_analysis import decompile_function
 
-    result = _first_tool_result(decompile.__wrapped__(addr))
+    result = decompile_function(addr)
     if result.get("error"):
         error = str(result["error"])
         code = "function_not_found" if "not found" in error else "decompile_failed"
@@ -406,9 +394,9 @@ def function_decompile_resource(addr: str) -> str:
 @resource(uri="ida://function/{addr}/disasm")
 @idaread
 def function_disasm_resource(addr: str) -> str:
-    from .api_analysis import disasm
+    from .api_analysis import disassemble_function
 
-    result = _first_tool_result(disasm.__wrapped__(addr))
+    result = disassemble_function(addr)
     if result.get("error"):
         return _resource_error("disasm_failed", str(result["error"]), address=addr)
     instructions = [
@@ -433,9 +421,9 @@ def function_disasm_resource(addr: str) -> str:
 @resource(uri="ida://function/{addr}/basic_blocks")
 @idaread
 def function_basic_blocks_resource(addr: str) -> str:
-    from .api_analysis import get_basic_blocks
+    from .api_analysis import basic_blocks_for_function
 
-    result = get_basic_blocks.__wrapped__(addr)
+    result = basic_blocks_for_function(addr)
     if result.get("error"):
         return _resource_error("basic_blocks_failed", str(result["error"]), address=addr)
     blocks = [
@@ -462,19 +450,23 @@ def function_basic_blocks_resource(addr: str) -> str:
 @resource(uri="ida://function/{addr}/stack")
 @idaread
 def function_stack_resource(addr: str) -> str:
-    from .api_stack import stack_frame
+    from .api_stack import stack_frame_for_function
 
-    result = _first_tool_result(stack_frame.__wrapped__(addr))
+    result = stack_frame_for_function(addr)
     if result.get("error"):
         return _resource_error("stack_frame_failed", str(result["error"]), address=addr)
+    frame_variables = result.get("frame_variables", [])
+    local_variables = result.get("local_variables", [])
+    items = frame_variables or result.get("variables", [])
     return _resource_detail(
         "function_stack",
         address=result.get("start_ea"),
         name=result.get("name"),
         method=result.get("method"),
-        count=len(result.get("variables", [])),
-        items=result.get("variables", []),
-        frame_structure=result.get("frame_structure"),
+        count=len(items),
+        items=items,
+        frame_variables=frame_variables,
+        local_variables=local_variables,
     )
 
 
@@ -577,9 +569,9 @@ def struct_resource(name: str) -> str:
 @resource(uri="ida://xrefs/to/{addr}")
 @idaread
 def xrefs_to_resource(addr: str) -> str:
-    from .api_analysis import xrefs_to
+    from .api_analysis import xrefs_to_address
 
-    result = _first_tool_result(xrefs_to.__wrapped__(addr))
+    result = xrefs_to_address(addr)
     if result.get("error"):
         return _resource_error("xrefs_to_failed", str(result["error"]), address=addr)
     items = [_normalize_xref_item(item, "to") for item in result.get("xrefs", [])]
@@ -589,9 +581,9 @@ def xrefs_to_resource(addr: str) -> str:
 @resource(uri="ida://xrefs/to/{addr}/summary")
 @idaread
 def xrefs_to_summary_resource(addr: str) -> str:
-    from .api_analysis import xrefs_to
+    from .api_analysis import xrefs_to_address
 
-    result = _first_tool_result(xrefs_to.__wrapped__(addr))
+    result = xrefs_to_address(addr)
     if result.get("error"):
         return _resource_error("xrefs_to_failed", str(result["error"]), address=addr)
     items = [_normalize_xref_item(item, "to") for item in result.get("xrefs", [])]
@@ -601,9 +593,9 @@ def xrefs_to_summary_resource(addr: str) -> str:
 @resource(uri="ida://xrefs/from/{addr}")
 @idaread
 def xrefs_from_resource(addr: str) -> str:
-    from .api_analysis import xrefs_from
+    from .api_analysis import xrefs_from_address
 
-    result = _first_tool_result(xrefs_from.__wrapped__(addr))
+    result = xrefs_from_address(addr)
     if result.get("error"):
         return _resource_error("xrefs_from_failed", str(result["error"]), address=addr)
     items = [_normalize_xref_item(item, "from") for item in result.get("xrefs", [])]
@@ -613,9 +605,9 @@ def xrefs_from_resource(addr: str) -> str:
 @resource(uri="ida://xrefs/from/{addr}/summary")
 @idaread
 def xrefs_from_summary_resource(addr: str) -> str:
-    from .api_analysis import xrefs_from
+    from .api_analysis import xrefs_from_address
 
-    result = _first_tool_result(xrefs_from.__wrapped__(addr))
+    result = xrefs_from_address(addr)
     if result.get("error"):
         return _resource_error("xrefs_from_failed", str(result["error"]), address=addr)
     items = [_normalize_xref_item(item, "from") for item in result.get("xrefs", [])]

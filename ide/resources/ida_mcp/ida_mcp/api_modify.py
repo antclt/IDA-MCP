@@ -25,7 +25,6 @@ try:
     import ida_name  # type: ignore
     import ida_hexrays  # type: ignore
     import ida_kernwin  # type: ignore
-    import idc  # type: ignore
 except ImportError:
     idaapi = None
     ida_bytes = None
@@ -33,7 +32,6 @@ except ImportError:
     ida_name = None
     ida_hexrays = None
     ida_kernwin = None
-    idc = None
 from contextlib import contextmanager
 
 

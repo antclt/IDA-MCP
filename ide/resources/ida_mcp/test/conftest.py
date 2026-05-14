@@ -1,4 +1,4 @@
-"""pytest 配置和共享 fixtures。 
+"""pytest 配置和共享 fixtures。
 
 测试框架设计：
 1. gateway_internal_available - 检查 gateway 内部 API 是否运行
@@ -22,9 +22,8 @@
 import sys
 import os
 
-# 确保 ida_mcp 包可导入 — 包位于 ide/resources/ida_mcp/ida_mcp/
-_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_pkg_root = os.path.join(_repo_root, "ide", "resources", "ida_mcp")
+# 确保 ida_mcp 包可导入 — 测试位于 ide/resources/ida_mcp/test/
+_pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _pkg_root not in sys.path:
     sys.path.insert(0, _pkg_root)
 
@@ -34,6 +33,7 @@ import urllib.error
 import json
 import os
 import asyncio
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Dict, List, Union
@@ -52,6 +52,12 @@ def pytest_addoption(parser):
         default="both",
         choices=["stdio", "http", "both"],
         help="Transport mode to test: stdio, http, or both (default: both)",
+    )
+    parser.addoption(
+        "--allow-destructive-lifecycle",
+        action="store_true",
+        default=False,
+        help="Allow lifecycle tests that close a live IDA instance.",
     )
 
 
@@ -82,6 +88,7 @@ _api_call_logs: Dict[str, List[Dict[str, Any]]] = {
 
 # 日志目录路径
 _LOG_DIR = str(Path(__file__).resolve().parent.parent / ".artifacts" / "api_logs")
+_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 
 # API 分类映射（与 IDA API 工具名一致）
 _API_CATEGORIES = {
@@ -162,6 +169,7 @@ _API_CATEGORIES = {
 # 这些工具只在 proxy 暴露，不应通过 gateway /call 转发到某个现有实例。
 _PROXY_ONLY_TOOLS = {
     "open_in_ida",
+    "close_ida",
 }
 
 # 这些工具不接受 port/timeout 参数（gateway-side 工具，无需指定目标实例）。
@@ -179,6 +187,14 @@ def _call_proxy_only_tool_locally(tool_name: str, params: dict) -> Any:
         return lifecycle.open_in_ida(
             params.get("file_path", ""),
             extra_args=params.get("extra_args"),
+        )
+    if tool_name == "close_ida":
+        from ida_mcp.proxy import lifecycle
+
+        return lifecycle.close_ida(
+            save=bool(params.get("save", True)),
+            port=params.get("port"),
+            timeout=params.get("timeout"),
         )
 
     return {"error": f"Unsupported proxy-only tool: {tool_name}"}
@@ -384,14 +400,21 @@ def call_tool_stdio(tool_name: str, params: dict, port: Optional[int] = None) ->
     import time
 
     start_time = time.perf_counter()
+    call_params = dict(params)
+    route_timeout = call_params.pop("timeout", None)
+    route_port = call_params.pop("port", None)
+    if port is None and isinstance(route_port, int):
+        port = route_port
 
     url = f"http://{GATEWAY_INTERNAL_HOST}:{GATEWAY_INTERNAL_PORT}{GATEWAY_INTERNAL_BASE_PATH}/call"
     payload = {
         "tool": tool_name,
-        "params": params,
+        "params": call_params,
     }
     if port:
         payload["port"] = port
+    if isinstance(route_timeout, int) and route_timeout > 0:
+        payload["timeout"] = route_timeout
     result = http_post(url, payload)
 
     duration_ms = (time.perf_counter() - start_time) * 1000
@@ -501,6 +524,63 @@ def _is_gateway_internal_available() -> bool:
     return bool(isinstance(result, dict) and result.get("ok"))
 
 
+def _instance_health_rank(instance: dict) -> tuple[int, int, int]:
+    """Rank registered instances for test routing.
+
+    Tests should avoid stale, starting, quarantined, or unhealthy entries.
+    When multiple healthy instances exist, prefer the historical default
+    port 10000 and then the lowest numeric port for deterministic logs.
+    """
+    port = instance.get("port")
+    effective_state = str(instance.get("effective_state") or "ready")
+    health = str(instance.get("health") or "healthy")
+    quarantined_until = float(instance.get("quarantined_until") or 0.0)
+    is_ready = effective_state == "ready"
+    is_healthy = health in {"healthy", "degraded"}
+    is_quarantined = quarantined_until > time.time()
+    return (
+        0 if is_ready and is_healthy and not is_quarantined else 1,
+        0 if port == 10000 else 1,
+        int(port) if isinstance(port, int) else 65536,
+    )
+
+
+def _select_test_instance_port(instances: list[dict]) -> Optional[int]:
+    complex_candidates = [
+        instance
+        for instance in instances
+        if _instance_matches_sample(instance, "complex.exe")
+    ]
+    if complex_candidates:
+        instances = complex_candidates
+
+    candidates = [
+        instance
+        for instance in instances
+        if isinstance(instance.get("port"), int)
+        and str(instance.get("effective_state") or "ready") == "ready"
+        and str(instance.get("health") or "healthy")
+        not in {"unreachable", "unresponsive", "error"}
+        and float(instance.get("quarantined_until") or 0.0) <= time.time()
+    ]
+    if not candidates:
+        return None
+    return int(sorted(candidates, key=_instance_health_rank)[0]["port"])
+
+
+def _instance_matches_sample(instance: dict, sample_name: str) -> bool:
+    expected = sample_name.lower()
+    expected_stem = expected.rsplit(".", 1)[0]
+    for key in ("input_file", "idb_path", "database_path", "path"):
+        value = instance.get(key)
+        if not value:
+            continue
+        name = os.path.basename(str(value)).lower()
+        if name == expected or name.startswith(expected + ".") or name.startswith(expected_stem + "."):
+            return True
+    return False
+
+
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -542,14 +622,80 @@ def http_proxy_available():
 
 @pytest.fixture(scope="session")
 def instance_port(gateway_internal_available):
-    """获取第一个可用实例的端口。"""
+    """获取可用于主测试的 complex.exe healthy/ready IDA 实例端口。"""
     url = f"http://{GATEWAY_INTERNAL_HOST}:{GATEWAY_INTERNAL_PORT}{GATEWAY_INTERNAL_BASE_PATH}/instances"
     result = http_get(url)
     # API 直接返回列表，不是 {"instances": [...]} 格式
     instances = result if isinstance(result, list) else []
     if not instances:
         pytest.skip("No IDA instances available")
-    return instances[0].get("port")
+    selected = _select_test_instance_port(instances)
+    if selected is None:
+        states = [
+            {
+                "port": item.get("port"),
+                "health": item.get("health"),
+                "effective_state": item.get("effective_state"),
+                "quarantined_until": item.get("quarantined_until"),
+            }
+            for item in instances
+        ]
+        pytest.skip(f"No ready/healthy complex.exe IDA instance available: {states}")
+    return selected
+
+
+@pytest.fixture(scope="session")
+def complex_baseline() -> Dict[str, Any]:
+    """Loaded baseline harvested from test/samples/complex.exe."""
+    baseline_path = _FIXTURE_DIR / "complex_baseline.json"
+    with open(baseline_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _baseline_named_item(
+    items: List[Dict[str, Any]],
+    key: str,
+    expected_name: str,
+) -> Dict[str, Any]:
+    for item in items:
+        if item.get(key) == expected_name:
+            return item
+    pytest.skip(f"Baseline item not found: {expected_name}")
+
+
+@pytest.fixture(scope="session")
+def baseline_function(complex_baseline, functions_cache):
+    def _get(name: str) -> Dict[str, Any]:
+        expected = complex_baseline["functions"][name]
+        item = _baseline_named_item(functions_cache, "name", name)
+        assert str(item["start_ea"]).lower() == expected["start_ea"].lower()
+        return item
+
+    return _get
+
+
+@pytest.fixture(scope="session")
+def baseline_global(complex_baseline, globals_cache):
+    def _get(name: str) -> Dict[str, Any]:
+        expected = complex_baseline["globals"][name]
+        item = _baseline_named_item(globals_cache, "name", name)
+        assert str(item["ea"]).lower() == expected["ea"].lower()
+        return item
+
+    return _get
+
+
+@pytest.fixture(scope="session")
+def baseline_string(complex_baseline, strings_cache):
+    def _get(text: str) -> Dict[str, Any]:
+        item = _baseline_named_item(strings_cache, "text", text)
+        expected = complex_baseline["strings"][text]
+        item_ea = item["ea"]
+        item_ea_hex = hex(item_ea) if isinstance(item_ea, int) else str(item_ea)
+        assert item_ea_hex.lower() == expected["ea"].lower()
+        return item
+
+    return _get
 
 
 @pytest.fixture
@@ -569,11 +715,17 @@ def tool_caller(request, instance_port):
             pytest.skip("HTTP proxy not available")
 
         def caller(tool_name: str, params: Optional[dict] = None) -> Any:
-            return call_tool_http(tool_name, params or {}, instance_port)
+            call_params = params or {}
+            route_port = call_params.get("port")
+            selected_port = route_port if isinstance(route_port, int) else instance_port
+            return call_tool_http(tool_name, call_params, selected_port)
     else:
 
         def caller(tool_name: str, params: Optional[dict] = None) -> Any:
-            return call_tool_stdio(tool_name, params or {}, instance_port)
+            call_params = params or {}
+            route_port = call_params.get("port")
+            selected_port = route_port if isinstance(route_port, int) else instance_port
+            return call_tool_stdio(tool_name, call_params, selected_port)
 
     return caller
 
@@ -616,9 +768,9 @@ def strings_cache(instance_port) -> List[Dict[str, Any]]:
 
 @pytest.fixture(scope="session")
 def globals_cache(instance_port) -> List[Dict[str, Any]]:
-    """获取全局变量列表缓存（前 100 个）。"""
+    """获取全局变量列表缓存。"""
     # 工具名为 "list_globals"（与 IDA API 一致）
-    result = call_tool_stdio("list_globals", {"offset": 0, "count": 100}, instance_port)
+    result = call_tool_stdio("list_globals", {"offset": 0, "count": 1000}, instance_port)
     if "error" in result:
         pytest.skip(f"Cannot list globals: {result['error']}")
     return result.get("items", [])
@@ -648,11 +800,10 @@ def local_types_cache(instance_port) -> List[Dict[str, Any]]:
 
 
 @pytest.fixture(scope="session")
-def first_function(functions_cache) -> Dict[str, Any]:
-    """获取第一个函数（用于需要函数地址的测试）。"""
-    if not functions_cache:
-        pytest.skip("No functions available in IDB")
-    return functions_cache[0]
+def first_function(complex_baseline, baseline_function) -> Dict[str, Any]:
+    """获取默认测试函数。固定到 complex fixture，避免依赖 IDA 列表排序。"""
+    name = complex_baseline["memory"]["default_function"]
+    return baseline_function(name)
 
 
 @pytest.fixture(scope="session")
@@ -669,11 +820,10 @@ def first_function_name(first_function) -> str:
 
 
 @pytest.fixture(scope="session")
-def first_string(strings_cache) -> Dict[str, Any]:
-    """获取第一个字符串。"""
-    if not strings_cache:
-        pytest.skip("No strings available in IDB")
-    return strings_cache[0]
+def first_string(complex_baseline, baseline_string) -> Dict[str, Any]:
+    """获取默认测试字符串。固定到 complex sentinel。"""
+    text = complex_baseline["memory"]["default_string"]
+    return baseline_string(text)
 
 
 @pytest.fixture(scope="session")
@@ -684,11 +834,10 @@ def first_string_address(first_string) -> int:
 
 
 @pytest.fixture(scope="session")
-def first_global(globals_cache) -> Dict[str, Any]:
-    """获取第一个全局变量。"""
-    if not globals_cache:
-        pytest.skip("No globals available in IDB")
-    return globals_cache[0]
+def first_global(complex_baseline, baseline_global) -> Dict[str, Any]:
+    """获取默认测试全局变量。固定到可安全改名/改类型的 sink。"""
+    name = complex_baseline["memory"]["default_global"]
+    return baseline_global(name)
 
 
 @pytest.fixture(scope="session")
@@ -699,18 +848,9 @@ def first_global_address(first_global) -> int:
 
 
 @pytest.fixture(scope="session")
-def main_function(functions_cache) -> Optional[Dict[str, Any]]:
-    """尝试获取 main 函数。"""
-    for func in functions_cache:
-        if func.get("name") in (
-            "main",
-            "_main",
-            "WinMain",
-            "wWinMain",
-            "mainCRTStartup",
-        ):
-            return func
-    return None
+def main_function(baseline_function) -> Optional[Dict[str, Any]]:
+    """获取 complex fixture 的 main 函数。"""
+    return baseline_function("main")
 
 
 @pytest.fixture(scope="session")
@@ -737,6 +877,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "types: 类型工具测试")
     config.addinivalue_line("markers", "stack: 栈帧工具测试")
     config.addinivalue_line("markers", "resources: URI 资源测试")
+    config.addinivalue_line("markers", "modeling: 建模工具测试")
+    config.addinivalue_line("markers", "lifecycle: IDA 生命周期管理测试")
+    config.addinivalue_line("markers", "destructive: closes or mutates external processes")
 
 
 def pytest_sessionfinish(session, exitstatus):

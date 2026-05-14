@@ -17,6 +17,7 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool
 from .sync import idaread, idawrite, wait_for_auto_analysis
+from .type_utils import iter_local_type_ordinals
 from .utils import parse_address, is_valid_c_identifier, hex_addr
 
 # IDA module imports
@@ -182,6 +183,29 @@ def _load_named_type(name: str) -> Any:
     except Exception:
         pass
     return None
+
+
+def _load_numbered_type(til: Any, ordinal: int) -> Any:
+    """Load a numbered local type across IDAPython API variants."""
+    tif = ida_typeinf.tinfo_t()
+
+    method = getattr(tif, "get_numbered_type", None)
+    if callable(method):
+        try:
+            if method(til, ordinal):
+                return tif
+        except TypeError:
+            pass
+        except Exception:
+            pass
+
+    try:
+        ret = ida_typeinf.get_numbered_type(til, ordinal, tif)  # type: ignore[attr-defined]
+        if ret is False:
+            return None
+        return tif
+    except Exception:
+        return None
 
 
 def _extract_decl_name(decl_text: str, expected_kind: str, parsed_name: Optional[str]) -> Optional[str]:
@@ -596,11 +620,10 @@ def list_structs(
     items: List[dict] = []
     
     try:
-        qty = ida_typeinf.get_ordinal_qty()  # type: ignore
         substr = pattern.lower() if pattern else None
         til = idaapi.cvar.idati  # type: ignore
 
-        for ordinal in range(1, qty + 1):
+        for ordinal in iter_local_type_ordinals(ida_typeinf):
             try:
                 name = ida_typeinf.get_numbered_type_name(til, ordinal)  # type: ignore
             except Exception:
@@ -613,8 +636,9 @@ def list_structs(
                 continue
 
             try:
-                tif = ida_typeinf.tinfo_t()
-                ida_typeinf.get_numbered_type(til, ordinal, tif)  # type: ignore
+                tif = _load_numbered_type(til, ordinal)
+                if tif is None:
+                    continue
 
                 if not (tif.is_struct() or tif.is_union()):
                     continue

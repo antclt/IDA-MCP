@@ -39,6 +39,7 @@ if __package__ in {None, ""}:
         _register_handler,
         _shutdown_handler,
         _update_instance_handler,
+        is_gateway_request_authorized,
     )
 else:
     from .config import (
@@ -62,9 +63,12 @@ else:
         _register_handler,
         _shutdown_handler,
         _update_instance_handler,
+        is_gateway_request_authorized,
     )
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
@@ -76,6 +80,13 @@ GATEWAY_CONNECT_HOST = get_http_connect_host()
 GATEWAY_PORT = get_http_port()
 MCP_PATH = get_http_path()
 REQUEST_TIMEOUT = get_request_timeout()
+
+
+class _GatewayAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        if not is_gateway_request_authorized(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)
 
 
 def _build_internal_app() -> Starlette:
@@ -124,6 +135,7 @@ def _build_app() -> Starlette:
             Mount("/internal", app=_build_internal_app()),
             Mount("/", app=mcp_app),
         ],
+        middleware=[Middleware(_GatewayAuthMiddleware)],
         lifespan=gateway_lifespan,
     )
 

@@ -216,8 +216,9 @@ class TestModelingToolBehavior:
 class TestModelingIntegration:
     """Integration tests that exercise the proxy/direct tool path."""
 
-    def test_delete_and_recreate_function(self, tool_caller, first_function):
-        start_ea = first_function["start_ea"]
+    def test_delete_and_recreate_function(self, tool_caller, complex_baseline):
+        start_ea = complex_baseline["modeling"]["safe_code_address"]
+        end_ea = complex_baseline["modeling"]["safe_code_function_end"]
 
         delete_result = tool_caller("delete_function", {"address": start_ea})
         assert isinstance(delete_result, dict)
@@ -230,7 +231,7 @@ class TestModelingIntegration:
             assert missing
             assert "error" in missing[0]
 
-            create_result = tool_caller("create_function", {"address": start_ea})
+            create_result = tool_caller("create_function", {"address": start_ea, "end": end_ea})
             assert isinstance(create_result, dict)
             assert "error" not in create_result
             assert create_result.get("function") is not None
@@ -243,10 +244,11 @@ class TestModelingIntegration:
         finally:
             restored = tool_caller("disasm", {"addr": start_ea})
             if isinstance(restored, list) and restored and "error" in restored[0]:
-                tool_caller("create_function", {"address": start_ea})
+                tool_caller("create_function", {"address": start_ea, "end": end_ea})
 
-    def test_undefine_and_make_code_round_trip(self, tool_caller, first_function_address):
-        address = hex(first_function_address)
+    def test_undefine_and_make_code_round_trip(self, tool_caller, complex_baseline):
+        address = complex_baseline["modeling"]["safe_code_address"]
+        end_ea = complex_baseline["modeling"]["safe_code_function_end"]
 
         undef_result = tool_caller("undefine_items", {"address": address, "size": 1})
         assert isinstance(undef_result, dict)
@@ -261,11 +263,11 @@ class TestModelingIntegration:
             assert code_result.get("new_item", {}).get("kind") == "code"
         finally:
             tool_caller("make_code", {"address": address})
+            tool_caller("create_function", {"address": address, "end": end_ea})
 
-    def test_make_data_success_and_restore_string(self, tool_caller, first_string):
-        address = first_string["ea"]
-        address = hex(address) if isinstance(address, int) else address
-        string_len = int(first_string.get("length") or 0)
+    def test_make_data_success_and_restore_string(self, tool_caller, complex_baseline):
+        address = complex_baseline["modeling"]["safe_string_address"]
+        string_len = complex_baseline["modeling"]["safe_string_length"]
 
         result = tool_caller("make_data", {"address": address, "data_type": "byte", "count": 4})
         assert isinstance(result, dict)
@@ -281,10 +283,9 @@ class TestModelingIntegration:
         finally:
             _restore_string(tool_caller, address, string_len)
 
-    def test_make_string_success_after_data(self, tool_caller, first_string):
-        address = first_string["ea"]
-        address = hex(address) if isinstance(address, int) else address
-        string_len = int(first_string.get("length") or 0)
+    def test_make_string_success_after_data(self, tool_caller, complex_baseline):
+        address = complex_baseline["modeling"]["safe_string_address"]
+        string_len = complex_baseline["modeling"]["safe_string_length"]
 
         data_result = tool_caller("make_data", {"address": address, "data_type": "byte", "count": 2})
         assert isinstance(data_result, dict)

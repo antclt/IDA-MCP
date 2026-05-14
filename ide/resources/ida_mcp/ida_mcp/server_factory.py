@@ -13,7 +13,7 @@ __version__ = "0.2.0"
 
 def create_mcp_server(
     name: Optional[str] = None,
-    enable_unsafe: bool = True,
+    enable_unsafe: bool = False,
 ) -> "FastMCP":  # type: ignore[name-defined]
     """Create the FastMCP server used inside an IDA instance."""
     from fastmcp import FastMCP

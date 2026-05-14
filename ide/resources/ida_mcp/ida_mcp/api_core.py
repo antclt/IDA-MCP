@@ -24,6 +24,7 @@ from typing import Annotated, Optional, List
 
 from .rpc import tool
 from .sync import idaread
+from .type_utils import iter_local_type_ordinals
 from .utils import paginate, pattern_filter, normalize_arch, hex_addr
 from .strings_cache import (
     get_strings_cache as _shared_get_strings_cache,
@@ -34,6 +35,7 @@ from .strings_cache import (
 # IDA module imports
 try:
     import idaapi  # type: ignore
+    import ida_ida  # type: ignore
     import idautils  # type: ignore
     import ida_funcs  # type: ignore
     import ida_bytes  # type: ignore
@@ -48,6 +50,7 @@ try:
 except ImportError:
     # allow import outside IDA (e.g. for tests), but related features will be unavailable
     idaapi = None
+    ida_ida = None
     idautils = None
     ida_funcs = None
     ida_bytes = None
@@ -122,49 +125,22 @@ def get_metadata() -> dict:
     except Exception:
         input_file = None
     
-    # get architecture/bit width
+    # IDA 9.x architecture/bit-width metadata.
     arch: Optional[str] = None
     bits = 0
-    try:
-        inf = idaapi.get_inf_structure()  # type: ignore
-        arch = getattr(inf, 'procname', None) or getattr(inf, 'procName', None)
-        if isinstance(arch, bytes):
-            arch = arch.decode(errors='ignore')
-        
-        is_64 = False
+    if ida_ida is not None:
         try:
-            is_64 = inf.is_64bit()
+            arch_candidate = ida_ida.inf_get_procname()
+            if isinstance(arch_candidate, bytes):
+                arch_candidate = arch_candidate.decode(errors="ignore")
+            arch = arch_candidate or None
         except Exception:
-            try:
-                is_64 = bool(getattr(inf, 'is_64bit', lambda: False)())
-            except Exception:
-                is_64 = False
-        bits = 64 if is_64 else 32
-    except Exception:
-        pass
-    
-    # fallback architecture retrieval
-    if not arch:
-        for fn_name in ('ph_get_idp_name', 'get_idp_name', 'ph_get_id', 'ph_get_idp_desc'):
-            try:
-                fn = getattr(idaapi, fn_name, None)
-                if callable(fn):
-                    cand = fn()
-                    if isinstance(cand, bytes):
-                        cand = cand.decode(errors='ignore')
-                    if cand:
-                        arch = cand
-                        break
-            except Exception:
-                continue
-    
-    # fallback bit-width retrieval
-    if not bits:
+            arch = None
+
         try:
-            if getattr(idaapi, '__EA64__', False):
-                bits = 64
-            else:
-                bits = 32
+            app_bitness = int(ida_ida.inf_get_app_bitness())
+            if app_bitness in (16, 32, 64):
+                bits = app_bitness
         except Exception:
             bits = 0
     
@@ -187,14 +163,11 @@ def get_metadata() -> dict:
     
     # endianness
     endian = None
-    try:
-        inf3 = idaapi.get_inf_structure()  # type: ignore
-        if hasattr(inf3, 'is_be') and inf3.is_be():
-            endian = 'big'
-        else:
-            endian = 'little'
-    except Exception:
-        endian = None
+    if ida_ida is not None:
+        try:
+            endian = "big" if ida_ida.inf_is_be() else "little"
+        except Exception:
+            endian = None
     
     return {
         "input_file": input_file,
@@ -344,13 +317,9 @@ def list_strings(
 def list_local_types() -> dict:
     """List all local types defined in the database."""
     items: List[dict] = []
-    try:
-        qty = ida_typeinf.get_ordinal_qty()  # type: ignore
-    except Exception:
-        qty = 0
-    
+
     max_len = 512
-    for ordinal in range(1, qty + 1):
+    for ordinal in iter_local_type_ordinals(ida_typeinf):
         try:
             name = ida_typeinf.get_numbered_type_name(idaapi.cvar.idati, ordinal)  # type: ignore
         except Exception:

@@ -71,6 +71,7 @@ class _ConfigFormBinder:
         ("http_host", "_http_host", "lineedit"),
         ("http_port", "_http_port", "spinbox"),
         ("http_path", "_http_path", "lineedit"),
+        ("gateway_token", "_gateway_token", "lineedit"),
         ("ida_default_port", "_ida_default_port", "spinbox"),
         ("ida_host", "_ida_host", "lineedit"),
         ("ida_path", "_ida_path", "lineedit"),
@@ -280,7 +281,6 @@ class _InstallController:
             worker.wait(3000)
         worker.deleteLater()
         self._check_worker = None
-
 
 class McpToolFetchWorker(QThread):
     """Fetches available tools from an MCP server in a background thread.

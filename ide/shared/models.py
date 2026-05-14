@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 DEFAULT_GATEWAY_HOST = "127.0.0.1"
 DEFAULT_GATEWAY_PORT = 11338
 DEFAULT_GATEWAY_PATH = "/mcp"
-DEFAULT_HTTP_HOST = "0.0.0.0"
+DEFAULT_HTTP_HOST = "127.0.0.1"
 DEFAULT_IDA_HOST = "127.0.0.1"
 DEFAULT_IDA_PORT = 10000
 DEFAULT_SERVER_NAME = "IDA-MCP"
@@ -22,11 +22,12 @@ DEFAULT_SERVER_NAME = "IDA-MCP"
 class IdaMcpConfig:
     enable_stdio: bool = False
     enable_http: bool = True
-    enable_unsafe: bool = True
+    enable_unsafe: bool = False
     wsl_path_bridge: bool = False
     http_host: str = DEFAULT_HTTP_HOST
     http_port: int = DEFAULT_GATEWAY_PORT
     http_path: str = DEFAULT_GATEWAY_PATH
+    gateway_token: str = ""
     ida_default_port: int = DEFAULT_IDA_PORT
     ida_host: str = DEFAULT_IDA_HOST
     ida_path: str | None = None
@@ -57,6 +58,7 @@ class IdaMcpConfig:
                 "http_host",
                 "http_port",
                 "http_path",
+                "gateway_token",
             ],
         ),
         (

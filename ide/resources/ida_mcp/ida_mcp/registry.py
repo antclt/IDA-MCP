@@ -24,6 +24,7 @@ from .config import (
     get_gateway_internal_host,
     get_gateway_internal_port,
     get_gateway_internal_url,
+    get_gateway_auth_headers,
     get_http_path,
     get_http_port,
     get_request_timeout,
@@ -380,7 +381,7 @@ def _request_json(
         return None
 
     data = None
-    headers = {}
+    headers = get_gateway_auth_headers()
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"

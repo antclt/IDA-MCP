@@ -17,9 +17,11 @@ from .utils import parse_address, normalize_list_input, hex_addr
 try:
     import idaapi  # type: ignore
     import ida_bytes  # type: ignore
+    import ida_ida  # type: ignore
 except ImportError:
     idaapi = None
     ida_bytes = None
+    ida_ida = None
 
 
 # ============================================================================
@@ -108,8 +110,7 @@ def _read_scalar(addr: Union[int, str], width: int, signed: bool = False) -> Lis
             
             endian = 'little'
             try:
-                inf = idaapi.get_inf_structure()
-                if hasattr(inf, 'is_be') and inf.is_be():
+                if ida_ida is not None and ida_ida.inf_is_be():
                     endian = 'big'
             except Exception:
                 pass

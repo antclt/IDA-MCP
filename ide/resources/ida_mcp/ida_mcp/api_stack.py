@@ -27,11 +27,6 @@ except ImportError:
     ida_typeinf = None
     ida_hexrays = None
 
-from . import compat  # IDA 8.x/9.x compatibility layer
-
-# use compatibility layer version detection
-IDA9_OR_LATER = compat.IDA9_OR_LATER
-
 PT_SIL = getattr(ida_typeinf, 'PT_SIL', 1) if ida_typeinf is not None else 1
 
 
@@ -85,65 +80,86 @@ def _default_stack_type(size: int) -> str:
     return f"char[{size}]"
 
 
+def _get_frame_tinfo(f: Any) -> Any:
+    """Load a function frame as IDA 9 tinfo_t."""
+    if ida_typeinf is None or ida_frame is None:
+        return None
+
+    tif = ida_typeinf.tinfo_t()
+    try:
+        if ida_frame.get_func_frame(tif, f):  # type: ignore[attr-defined]
+            return tif
+    except Exception:
+        pass
+
+    try:
+        if getattr(f, "frame", None) and tif.get_type_by_tid(f.frame):
+            return tif
+    except Exception:
+        pass
+    return None
+
+
+def _frame_variables_from_func(f: Any) -> List[dict]:
+    """Return IDA 9 frame members from a function frame type."""
+    tif = _get_frame_tinfo(f)
+    if tif is None:
+        return []
+
+    variables: List[dict] = []
+    try:
+        if not tif.is_udt():
+            return []
+        udt = ida_typeinf.udt_type_data_t()
+        if not tif.get_udt_details(udt):
+            return []
+        for udm in udt:
+            try:
+                if getattr(udm, "is_gap", lambda: False)():
+                    continue
+                variables.append({
+                    "name": udm.name,
+                    "offset": udm.offset // 8,
+                    "size": udm.size // 8,
+                    "type": str(udm.type) if udm.type else None,
+                })
+            except Exception:
+                continue
+    except Exception:
+        return []
+    return variables
+
+
+def _frame_member_by_name(f: Any, name: str) -> Optional[dict]:
+    for member in _frame_variables_from_func(f):
+        if member.get("name") == name:
+            return member
+    return None
+
+
 def _define_stack_member(f: Any, offset: int, name: str, tif: Any) -> tuple[bool, Optional[str]]:
     errors: list[str] = []
 
-    if ida_frame is not None:
-        try:
-            if hasattr(ida_frame, "define_stkvar"):
-                if ida_frame.define_stkvar(f, name, offset, tif):  # type: ignore[attr-defined]
-                    return True, None
-                errors.append("define_stkvar returned False")
-        except Exception as exc:
-            errors.append(f"define_stkvar failed: {exc}")
-        try:
-            if hasattr(ida_frame, "add_frame_member"):
-                if ida_frame.add_frame_member(f, name, offset, tif):  # type: ignore[attr-defined]
-                    return True, None
-                errors.append("add_frame_member returned False")
-        except Exception as exc:
-            errors.append(f"add_frame_member failed: {exc}")
-
-    frame = None
-    try:
-        frame = ida_frame.get_frame(f)  # type: ignore
-    except Exception:
-        frame = None
-    if not frame:
-        return False, "no stack frame"
-
-    if idaapi is None:
-        return False, "IDA APIs unavailable"
-
-    size = 1
-    try:
-        size = tif.get_size()
-    except Exception:
-        size = 1
-    if size is None or size <= 0:
-        size = 1
-
-    if size == 1:
-        flag = idaapi.FF_BYTE
-    elif size == 2:
-        flag = idaapi.FF_WORD
-    elif size == 4:
-        flag = idaapi.FF_DWORD
-    elif size == 8:
-        flag = idaapi.FF_QWORD
-    else:
-        flag = idaapi.FF_BYTE
+    if ida_frame is None:
+        return False, "ida_frame unavailable"
 
     try:
-        result = compat.add_struc_member(frame, name, offset, flag, None, size)
+        if ida_frame.define_stkvar(f, name, offset, tif):  # type: ignore[attr-defined]
+            return True, None
     except Exception as exc:
-        errors.append(str(exc))
-        return False, "; ".join(errors)
+        errors.append(f"define_stkvar failed: {exc}")
+    else:
+        errors.append("define_stkvar returned False")
 
-    if result != 0:
-        errors.append(f"add_struc_member returned {result}")
-        return False, "; ".join(errors)
-    return True, None
+    try:
+        if ida_frame.add_frame_member(f, name, offset, tif):  # type: ignore[attr-defined]
+            return True, None
+    except Exception as exc:
+        errors.append(f"add_frame_member failed: {exc}")
+    else:
+        errors.append("add_frame_member returned False")
+
+    return False, "; ".join(errors)
 
 
 # ============================================================================
@@ -200,72 +216,7 @@ def _stack_frame_single(query: str) -> dict:
     local_variables: List[dict] = []
     hexrays_error = None
     
-    # get IDA stack frame structure
-    # method 1: IDA 9.x - use func.frame + tinfo_t
-    if IDA9_OR_LATER:
-        try:
-            tif = ida_typeinf.tinfo_t()
-            if hasattr(f, 'frame') and f.frame and tif.get_type_by_tid(f.frame):
-                if tif.is_udt():
-                    udt = ida_typeinf.udt_type_data_t()
-                    if tif.get_udt_details(udt):
-                        for udm in udt:
-                            try:
-                                if hasattr(udm, 'is_gap') and udm.is_gap():
-                                    continue
-                                frame_variables.append({
-                                    "name": udm.name,
-                                    "offset": udm.offset // 8,
-                                    "size": udm.size // 8,
-                                    "type": str(udm.type) if udm.type else None,
-                                })
-                            except Exception:
-                                continue
-        except Exception:
-            pass
-    
-    # method 2: traditional stack frame (ida_frame.get_frame) - fallback
-    if not frame_variables:
-        frame = None
-        try:
-            frame = ida_frame.get_frame(f)  # type: ignore
-        except Exception:
-            frame = None
-        
-        if frame:
-            try:
-                frame_size = compat.get_struc_size(frame)
-                offset = 0
-                while offset < frame_size:
-                    member = compat.get_member(frame, offset)
-                    if member:
-                        try:
-                            member_name = compat.get_member_name(member.id)
-                            member_size = compat.get_member_size(member)
-                            member_offset = member.soff
-                            
-                            member_type = None
-                            try:
-                                tif = ida_typeinf.tinfo_t()
-                                if compat.get_member_tinfo(tif, member):
-                                    member_type = str(tif)
-                            except Exception:
-                                pass
-                            
-                            frame_variables.append({
-                                "name": member_name,
-                                "offset": member_offset,
-                                "size": member_size,
-                                "type": member_type,
-                            })
-                            
-                            offset = member.soff + member_size
-                        except Exception:
-                            offset += 1
-                    else:
-                        offset += 1
-            except Exception:
-                pass
+    frame_variables = _frame_variables_from_func(f)
     
     # get Hex-Rays local variables (always attempt to retrieve all locals)
     try:
@@ -327,26 +278,31 @@ def _stack_frame_single(query: str) -> dict:
             "note": "no stack frame or local variables",
         }
     
-    # return structure: prefer local_variables (more complete), frame_variables as supplement
+    # Frame members are the stable source for stack offsets. Hex-Rays locals
+    # can rename/split variables after decompilation and are kept as supplement.
     result: dict = {
         "query": query,
         "name": fname,
         "start_ea": hex_addr(f.start_ea),
     }
     
-    # primarily return Hex-Rays local variables (if available)
-    if local_variables:
-        result["variables"] = local_variables
-        result["method"] = "hexrays"
-        # if stack frame structure is also available, include as supplementary info
-        if frame_variables:
-            result["frame_structure"] = frame_variables
-    else:
-        # only stack frame structure available
+    if frame_variables:
         result["variables"] = frame_variables
+        result["frame_variables"] = frame_variables
         result["method"] = "ida_frame"
+        if local_variables:
+            result["local_variables"] = local_variables
+    else:
+        result["variables"] = local_variables
+        result["local_variables"] = local_variables
+        result["method"] = "hexrays"
     
     return result
+
+
+def stack_frame_for_function(query: Union[int, str]) -> dict:
+    """Service helper for a single stack-frame request."""
+    return _stack_frame_single(str(query))
 
 
 # ============================================================================
@@ -400,13 +356,7 @@ def declare_stack(
             results.append({"error": "function not found", "item": item})
             continue
 
-        existing = None
-        try:
-            frame = ida_frame.get_frame(f)  # type: ignore
-            if frame:
-                existing = compat.get_member_by_name(frame, name)
-        except Exception:
-            existing = None
+        existing = _frame_member_by_name(f, name)
         if existing:
             results.append({
                 "function_address": hex_addr(int(f.start_ea)),
@@ -475,35 +425,34 @@ def delete_stack(
             results.append({"error": "function not found", "item": item})
             continue
         
-        frame = None
-        try:
-            frame = ida_frame.get_frame(f)  # type: ignore
-        except Exception:
-            frame = None
-        
-        if not frame:
-            results.append({"error": "no stack frame", "item": item})
+        if ida_frame is None:
+            results.append({"error": "ida_frame unavailable", "item": item})
             continue
-        
-        # find and delete member
+
+        member = _frame_member_by_name(f, str(name))
+        if not member:
+            results.append({
+                "function_address": hex_addr(int(f.start_ea)),
+                "name": name,
+                "changed": False,
+                "deleted": False,
+                "error": "member not found",
+            })
+            continue
+
+        offset = int(member["offset"])
+        size = int(member.get("size") or 1)
+        if size <= 0:
+            size = 1
+
         try:
-            member = compat.get_member_by_name(frame, name)
-            if member:
-                ok = compat.del_struc_member(frame, member.soff)
-                results.append({
-                    "function_address": hex_addr(int(f.start_ea)),
-                    "name": name,
-                    "changed": bool(ok),
-                    "deleted": bool(ok),
-                })
-            else:
-                results.append({
-                    "function_address": hex_addr(int(f.start_ea)),
-                    "name": name,
-                    "changed": False,
-                    "deleted": False,
-                    "error": "member not found",
-                })
+            ok = ida_frame.delete_frame_members(f, offset, offset + size)  # type: ignore[attr-defined]
+            results.append({
+                "function_address": hex_addr(int(f.start_ea)),
+                "name": name,
+                "changed": bool(ok),
+                "deleted": bool(ok),
+            })
         except Exception as e:
             results.append({"error": str(e), "item": item})
     

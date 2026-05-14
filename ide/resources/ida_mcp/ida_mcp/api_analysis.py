@@ -20,27 +20,31 @@ from typing import Annotated, Optional, List, Dict, Any, Union
 from .rpc import tool
 from .sync import idaread, wait_for_auto_analysis
 from .utils import parse_address, hex_addr
-from .analysis_utils import decompile_silent as _decompile_silent
+from .analysis_utils import decompile_with_error as _decompile_with_error
 
 # IDA module imports
 try:
     import idaapi  # type: ignore
+    import ida_ida  # type: ignore
     import idautils  # type: ignore
     import ida_funcs  # type: ignore
     import ida_bytes  # type: ignore
     import ida_hexrays  # type: ignore
     import ida_search  # type: ignore
     import ida_gdl  # type: ignore
+    import ida_segment  # type: ignore
+    import ida_typeinf  # type: ignore
 except ImportError:
     idaapi = None
+    ida_ida = None
     idautils = None
     ida_funcs = None
     ida_bytes = None
     ida_hexrays = None
     ida_search = None
     ida_gdl = None
-
-from . import compat  # IDA 8.x/9.x compatibility layer
+    ida_segment = None
+    ida_typeinf = None
 
 
 # ============================================================================
@@ -99,10 +103,7 @@ def _decompile_cfunc(info: dict) -> tuple[Any, Optional[str]]:
     if hexrays_error:
         return None, hexrays_error
 
-    cfunc = _decompile_silent(info["start_ea"])
-    if not cfunc:
-        return None, "decompile returned None"
-    return cfunc, None
+    return _decompile_with_error(info["start_ea"])
 
 
 def _decompile_text(info: dict) -> tuple[Optional[str], Optional[str]]:
@@ -293,6 +294,11 @@ def _decompile_single(query: str) -> dict:
     }
 
 
+def decompile_function(query: Union[int, str]) -> dict:
+    """Service helper for a single decompile request."""
+    return _decompile_single(str(query))
+
+
 
 
 # ============================================================================
@@ -396,6 +402,11 @@ def _disasm_single(query: str) -> dict:
     }
 
 
+def disassemble_function(query: Union[int, str]) -> dict:
+    """Service helper for a single function disassembly request."""
+    return _disasm_single(str(query))
+
+
 # ============================================================================
 # Linear disassembly
 # ============================================================================
@@ -424,7 +435,7 @@ def linear_disasm(
     
     # verify segment exists
     try:
-        if hasattr(idaapi, 'getseg') and not idaapi.getseg(ea):
+        if ida_segment is not None and not ida_segment.getseg(ea):
             return {'error': 'no_segment'}
     except Exception:
         pass
@@ -690,6 +701,11 @@ def _xrefs_to_single(query: str) -> dict:
     }
 
 
+def xrefs_to_address(query: Union[int, str]) -> dict:
+    """Service helper for xrefs-to on a single address."""
+    return _xrefs_to_single(str(query))
+
+
 @tool
 @idaread
 def xrefs_from(
@@ -736,6 +752,11 @@ def _xrefs_from_single(query: str) -> dict:
     }
 
 
+def xrefs_from_address(query: Union[int, str]) -> dict:
+    """Service helper for xrefs-from on a single address."""
+    return _xrefs_from_single(str(query))
+
+
 # ============================================================================
 # Struct field references
 # ============================================================================
@@ -750,32 +771,33 @@ def xrefs_to_field(
     if not struct_name or not field_name:
         return {"error": "empty struct_name or field_name"}
     
-    sid = compat.get_struc_id(struct_name)
-    if sid == idaapi.BADADDR:
+    if ida_typeinf is None:
+        return {"error": "type APIs unavailable"}
+
+    tif = ida_typeinf.tinfo_t()
+    try:
+        if not tif.get_named_type(ida_typeinf.get_idati(), struct_name):
+            return {"error": "struct not found"}
+    except Exception:
         return {"error": "struct not found"}
-    
-    s = compat.get_struc(sid)
-    if not s:
+
+    try:
+        if not (tif.is_struct() or tif.is_union()):
+            return {"error": "not a struct/union"}
+    except Exception:
         return {"error": "struct not found"}
-    
+
     # find member offset
     target_off = None
-    m = compat.get_first_member(s)
-    while m is not None and m != idaapi.BADADDR:
-        try:
-            name = compat.get_member_name(compat.get_member_id(m))
-        except Exception:
-            name = None
-        if name == field_name:
-            try:
-                target_off = compat.get_member_offset(m)
-            except Exception:
-                target_off = None
-            break
-        try:
-            m = compat.get_next_member(s, compat.get_member_offset(m))
-        except Exception:
-            break
+    try:
+        udt = ida_typeinf.udt_type_data_t()
+        if tif.get_udt_details(udt):
+            for member in udt:
+                if member.name == field_name:
+                    target_off = int(member.offset // 8)
+                    break
+    except Exception:
+        target_off = None
     
     if target_off is None:
         return {"error": "field not found"}
@@ -876,21 +898,15 @@ def find_bytes(
     # default to searching the whole database
     if start_ea is None:
         try:
-            start_ea = idaapi.cvar.inf.min_ea  # type: ignore
+            start_ea = int(ida_ida.inf_get_min_ea())  # type: ignore[union-attr]
         except Exception:
-            try:
-                start_ea = idaapi.get_inf_structure().min_ea  # type: ignore
-            except Exception:
-                start_ea = 0
+            start_ea = 0
     
     if end_ea is None:
         try:
-            end_ea = idaapi.cvar.inf.max_ea  # type: ignore
+            end_ea = int(ida_ida.inf_get_max_ea())  # type: ignore[union-attr]
         except Exception:
-            try:
-                end_ea = idaapi.get_inf_structure().max_ea  # type: ignore
-            except Exception:
-                end_ea = 0xFFFFFFFFFFFFFFFF
+            end_ea = 0xFFFFFFFFFFFFFFFF
     
     # parse pattern string
     pattern_text = pattern.strip()
@@ -998,6 +1014,11 @@ def get_basic_blocks(
 ) -> dict:
     """Get basic blocks with control flow information."""
     wait_for_auto_analysis()
+    return _basic_blocks_single(addr)
+
+
+def _basic_blocks_single(addr: Union[int, str]) -> dict:
+    """Get basic blocks with control flow information for one function."""
     info = _resolve_function(addr)
     if info.get("error"):
         return info
@@ -1020,8 +1041,7 @@ def get_basic_blocks(
             # get predecessors
             preds: List[str] = []
             try:
-                for i in range(block.npred):  # type: ignore
-                    pred = fc[block.pred(i)]  # type: ignore
+                for pred in block.preds():  # type: ignore[attr-defined]
                     preds.append(hex_addr(pred.start_ea))
             except Exception:
                 pass
@@ -1030,8 +1050,7 @@ def get_basic_blocks(
             # get successors
             succs: List[str] = []
             try:
-                for i in range(block.nsucc):  # type: ignore
-                    succ = fc[block.succ(i)]  # type: ignore
+                for succ in block.succs():  # type: ignore[attr-defined]
                     succs.append(hex_addr(succ.start_ea))
             except Exception:
                 pass
@@ -1058,3 +1077,8 @@ def get_basic_blocks(
         "total": len(blocks),
         "blocks": blocks,
     }
+
+
+def basic_blocks_for_function(query: Union[int, str]) -> dict:
+    """Service helper for one function's basic blocks."""
+    return _basic_blocks_single(query)

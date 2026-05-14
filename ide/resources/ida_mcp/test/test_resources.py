@@ -17,7 +17,6 @@ pytestmark = pytest.mark.resources
 
 DEFAULT_HOST = "127.0.0.1"
 REQUEST_TIMEOUT = 30
-RESOURCE_FUNCTION_ADDRESS = "0x1400013A0"
 _LOG_DIR = str(Path(__file__).resolve().parent.parent / ".artifacts" / "api_logs")
 
 _uri_call_logs: Dict[str, List[Dict[str, Any]]] = {
@@ -175,6 +174,10 @@ def _assert_resource_error(data: Dict[str, Any], expected_code: Optional[str] = 
         assert data["error"]["code"] == expected_code
 
 
+def _resource_function_address(complex_baseline: Dict[str, Any]) -> str:
+    return complex_baseline["functions"]["ida_mcp_complex_dispatch"]["start_ea"]
+
+
 @pytest.fixture
 def resource_transport(request):
     transport = request.config.getoption("--transport", "stdio")
@@ -202,7 +205,7 @@ class TestResourceDiscovery:
 
 
 class TestMetadataResource:
-    def test_idb_metadata(self, instance_port, resource_transport):
+    def test_idb_metadata(self, instance_port, resource_transport, complex_baseline):
         result = read_resource("ida://idb/metadata", instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read metadata: {result['error']}")
@@ -210,6 +213,8 @@ class TestMetadataResource:
         data = result["data"]
         _assert_detail_resource(data, "idb_metadata")
         assert any(key in data for key in ["input_file", "arch", "bits", "hash"])
+        assert data["hash"] == complex_baseline["sample"]["sha256"]
+        assert data["bits"] == complex_baseline["sample"]["bits"]
 
 
 class TestFunctionResources:
@@ -220,8 +225,9 @@ class TestFunctionResources:
 
         _assert_list_resource(result["data"], "functions")
 
-    def test_function_detail(self, instance_port, resource_transport):
-        uri = f"ida://function/{RESOURCE_FUNCTION_ADDRESS}"
+    def test_function_detail(self, instance_port, resource_transport, complex_baseline):
+        address = _resource_function_address(complex_baseline)
+        uri = f"ida://function/{address}"
         result = read_resource(uri, instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read function detail: {result['error']}")
@@ -230,10 +236,11 @@ class TestFunctionResources:
         if isinstance(data, dict) and "error" in data:
             pytest.skip(f"Function detail unavailable: {data['error']}")
         _assert_detail_resource(data, "function")
-        assert data["address"].lower() == RESOURCE_FUNCTION_ADDRESS.lower()
+        assert data["address"].lower() == address.lower()
+        assert data["name"] == "ida_mcp_complex_dispatch"
 
-    def test_function_decompile(self, instance_port, resource_transport):
-        uri = f"ida://function/{RESOURCE_FUNCTION_ADDRESS}/decompile"
+    def test_function_decompile(self, instance_port, resource_transport, complex_baseline):
+        uri = f"ida://function/{_resource_function_address(complex_baseline)}/decompile"
         result = read_resource(uri, instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read function decompile: {result['error']}")
@@ -242,10 +249,12 @@ class TestFunctionResources:
         if "error" in data:
             pytest.skip(f"Decompiler unavailable: {data['error']}")
         _assert_detail_resource(data, "function_decompile")
+        assert data["address"].lower() == _resource_function_address(complex_baseline).lower()
+        assert data["name"] == "ida_mcp_complex_dispatch"
         assert "decompiled" in data
 
-    def test_function_disasm(self, instance_port, resource_transport):
-        uri = f"ida://function/{RESOURCE_FUNCTION_ADDRESS}/disasm"
+    def test_function_disasm(self, instance_port, resource_transport, complex_baseline):
+        uri = f"ida://function/{_resource_function_address(complex_baseline)}/disasm"
         result = read_resource(uri, instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read function disasm: {result['error']}")
@@ -256,8 +265,8 @@ class TestFunctionResources:
         _assert_detail_resource(data, "function_disasm")
         assert isinstance(data["items"], list)
 
-    def test_function_basic_blocks(self, instance_port, resource_transport):
-        uri = f"ida://function/{RESOURCE_FUNCTION_ADDRESS}/basic_blocks"
+    def test_function_basic_blocks(self, instance_port, resource_transport, complex_baseline):
+        uri = f"ida://function/{_resource_function_address(complex_baseline)}/basic_blocks"
         result = read_resource(uri, instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read function basic blocks: {result['error']}")
@@ -267,9 +276,10 @@ class TestFunctionResources:
             pytest.skip(f"Function basic blocks unavailable: {data['error']}")
         _assert_detail_resource(data, "function_basic_blocks")
         assert isinstance(data["items"], list)
+        assert len(data["items"]) == complex_baseline["functions"]["ida_mcp_complex_dispatch"]["basic_block_count"]
 
-    def test_function_stack(self, instance_port, resource_transport):
-        uri = f"ida://function/{RESOURCE_FUNCTION_ADDRESS}/stack"
+    def test_function_stack(self, instance_port, resource_transport, complex_baseline):
+        uri = f"ida://function/{complex_baseline['functions']['ida_mcp_stack_heavy_transform']['start_ea']}/stack"
         result = read_resource(uri, instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read function stack: {result['error']}")
@@ -279,6 +289,11 @@ class TestFunctionResources:
             pytest.skip(f"Stack info unavailable: {data['error']}")
         _assert_detail_resource(data, "function_stack")
         assert isinstance(data["items"], list)
+        assert data["method"] == "ida_frame"
+        assert data["frame_variables"] == data["items"]
+        assert isinstance(data.get("local_variables", []), list)
+        names = {item["name"] for item in data["items"]}
+        assert set(complex_baseline["stack_frame"]["ida_mcp_stack_heavy_transform"]["required_variables"]).issubset(names)
 
 
 class TestCoreListResources:
@@ -356,8 +371,8 @@ class TestCoreListResources:
 
 
 class TestXrefAndMemoryResources:
-    def test_xrefs_to_and_summary(self, instance_port, resource_transport):
-        addr = RESOURCE_FUNCTION_ADDRESS
+    def test_xrefs_to_and_summary(self, instance_port, resource_transport, complex_baseline):
+        addr = _resource_function_address(complex_baseline)
         result = read_resource(f"ida://xrefs/to/{addr}", instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read xrefs_to: {result['error']}")
@@ -368,8 +383,8 @@ class TestXrefAndMemoryResources:
             pytest.skip(f"Cannot read xrefs_to summary: {summary['error']}")
         _assert_detail_resource(summary["data"], "xrefs_to_summary")
 
-    def test_xrefs_from_and_summary(self, instance_port, resource_transport):
-        addr = RESOURCE_FUNCTION_ADDRESS
+    def test_xrefs_from_and_summary(self, instance_port, resource_transport, complex_baseline):
+        addr = _resource_function_address(complex_baseline)
         result = read_resource(f"ida://xrefs/from/{addr}", instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read xrefs_from: {result['error']}")
@@ -380,14 +395,15 @@ class TestXrefAndMemoryResources:
             pytest.skip(f"Cannot read xrefs_from summary: {summary['error']}")
         _assert_detail_resource(summary["data"], "xrefs_from_summary")
 
-    def test_memory_read(self, instance_port, resource_transport):
-        result = read_resource(f"ida://memory/{RESOURCE_FUNCTION_ADDRESS}", instance_port, resource_transport)
+    def test_memory_read(self, instance_port, resource_transport, complex_baseline):
+        result = read_resource(f"ida://memory/{complex_baseline['globals']['ida_mcp_patch_bytes']['ea']}?size=16", instance_port, resource_transport)
         if "error" in result:
             pytest.skip(f"Cannot read memory: {result['error']}")
         data = result["data"]
         _assert_detail_resource(data, "memory")
         assert "bytes" in data
         assert "hex" in data
+        assert data["hex"] == complex_baseline["globals"]["ida_mcp_patch_bytes"]["initial_hex"]
 
 
 class TestInvalidResources:

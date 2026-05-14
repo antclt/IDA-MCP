@@ -167,3 +167,43 @@ def test_create_mcp_server_logs_failed_resource_registration(monkeypatch, capsys
     captured = capsys.readouterr()
     assert "ida://ok" in mcp.resources
     assert "Failed to register resource ida://broken" in captured.out
+
+
+def test_create_mcp_server_skips_unsafe_tools_by_default(monkeypatch):
+    def safe_tool():
+        return {"ok": True}
+
+    def unsafe_tool():
+        return {"ok": True}
+
+    fake_fastmcp_module = types.SimpleNamespace(FastMCP=_FakeFastMCP)
+    monkeypatch.setitem(sys.modules, "fastmcp", fake_fastmcp_module)
+    monkeypatch.setattr(server_factory, "ensure_api_modules_loaded", lambda: None)
+    monkeypatch.setattr(
+        server_factory,
+        "get_tool_specs",
+        lambda: {
+            "safe_tool": ToolSpec(
+                name="safe_tool",
+                fn=safe_tool,
+                description="Safe tool",
+                unsafe=False,
+                execution_mode="direct",
+                module_name="test",
+            ),
+            "unsafe_tool": ToolSpec(
+                name="unsafe_tool",
+                fn=unsafe_tool,
+                description="Unsafe tool",
+                unsafe=True,
+                execution_mode="direct",
+                module_name="test",
+            ),
+        },
+    )
+    monkeypatch.setattr(server_factory, "get_resources", lambda: {})
+
+    mcp = server_factory.create_mcp_server()
+
+    assert "safe_tool" in mcp.tools
+    assert "unsafe_tool" not in mcp.tools

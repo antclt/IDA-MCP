@@ -99,6 +99,7 @@ def test_settings_page_language_switch_rebuilds_without_deleting_core_widgets() 
                 wsl_path_bridge=True,
                 ida_default_port=10010,
                 ida_host="127.0.0.2",
+                gateway_token="secret",
                 open_in_ida_bundle_dir="E:/bundle",
                 open_in_ida_autonomous=False,
                 auto_start=True,
@@ -121,13 +122,14 @@ def test_settings_page_language_switch_rebuilds_without_deleting_core_widgets() 
     assert page._category_list is category_list
     assert page._stack is stack
     assert category_list.item(0).text() == "Config"
-    assert category_list.item(1).text() == "Install"
-    assert category_list.item(2).text() == "Upgrade"
-    assert category_list.item(3).text() == "Model"
-    assert category_list.item(4).text() == "MCP"
-    assert category_list.item(5).text() == "Skills"
-    assert stack.count() == 6
-    assert page._save_hint_labels[-1].text().startswith("Save writes IDE config")
+    assert category_list.item(1).text() == "Theme"
+    assert category_list.item(2).text() == "Install"
+    assert category_list.item(3).text() == "Upgrade"
+    assert category_list.item(4).text() == "Model"
+    assert category_list.item(5).text() == "MCP"
+    assert category_list.item(6).text() == "Skills"
+    assert stack.count() == 7
+    assert page._save_hint_labels[-1].text().startswith("Save writes the IDE database")
 
     # Wait for the background check worker to finish and populate fields.
     # The install check runs in a QThread; process events until it completes.
@@ -146,6 +148,7 @@ def test_settings_page_language_switch_rebuilds_without_deleting_core_widgets() 
     assert page._auto_start.isChecked() is True
     assert page._server_name.text() == "IDA-MCP-Test"
     assert page._ida_host.text() == "127.0.0.2"
+    assert page._gateway_token.text() == "secret"
     assert page._wsl_container.isHidden() is True
     assert page._open_in_ida_bundle_dir_field.isEnabled() is True
     assert "Only used when WSL path bridge is enabled" in page._t(

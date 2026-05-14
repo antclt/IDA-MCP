@@ -14,15 +14,49 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import instance_registry as registry
-from .config import get_request_timeout
+from .config import get_gateway_token, get_request_timeout
 
 
 LOCALHOST = "127.0.0.1"
 REQUEST_TIMEOUT = get_request_timeout()
 DEBUG_ENABLED = False
 DEBUG_MAX_LEN = 1000
-DEBUG_INTERNAL_TOKEN = "ida-mcp-debug"
 _uvicorn_server = None
+
+
+def _request_client_host(request: Request) -> str:
+    client = getattr(request, "client", None)
+    return str(getattr(client, "host", "") or "")
+
+
+def _is_loopback_host(host: str) -> bool:
+    return host in {"127.0.0.1", "::1", "localhost", ""}
+
+
+def _request_token(request: Request) -> str | None:
+    authorization = request.headers.get("Authorization", "")
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+        if token:
+            return token
+    for header_name in ("X-IDA-MCP-Token", "X-Internal-Token"):
+        token = request.headers.get(header_name)
+        if token:
+            return token.strip()
+    return None
+
+
+def is_gateway_request_authorized(request: Request) -> bool:
+    """Authorize gateway access.
+
+    Local loopback access remains tokenless for the default desktop workflow.
+    Non-loopback access requires a configured shared token.
+    """
+    configured_token = get_gateway_token()
+    supplied_token = _request_token(request)
+    if configured_token:
+        return supplied_token == configured_token
+    return _is_loopback_host(_request_client_host(request))
 
 
 def _short(v: Any) -> str:
@@ -78,7 +112,7 @@ async def _debug_get(_: Request) -> JSONResponse:
 
 
 async def _debug_post(request: Request) -> JSONResponse:
-    if request.headers.get("X-Internal-Token") != DEBUG_INTERNAL_TOKEN:
+    if not is_gateway_request_authorized(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     payload = await request.json()
     enable = bool(

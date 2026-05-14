@@ -54,6 +54,7 @@ def test_ida_mcp_config_store_round_trips_extended_runtime_fields(
                 "wsl_path_bridge = true",
                 "ida_default_port = 10010",
                 'ida_host = "127.0.0.2"',
+                'gateway_token = "secret"',
                 'open_in_ida_bundle_dir = "C:/bundle"',
                 "open_in_ida_autonomous = false",
                 "auto_start = true",
@@ -71,6 +72,7 @@ def test_ida_mcp_config_store_round_trips_extended_runtime_fields(
     assert config.wsl_path_bridge is True
     assert config.ida_default_port == 10010
     assert config.ida_host == "127.0.0.2"
+    assert config.gateway_token == "secret"
     assert config.open_in_ida_bundle_dir == "C:/bundle"
     assert config.open_in_ida_autonomous is False
     assert config.auto_start is True
@@ -81,6 +83,7 @@ def test_ida_mcp_config_store_round_trips_extended_runtime_fields(
         wsl_path_bridge=False,
         ida_default_port=10020,
         ida_host="127.0.0.3",
+        gateway_token="next-secret",
         open_in_ida_bundle_dir="C:/bundle2",
         open_in_ida_autonomous=True,
         auto_start=False,
@@ -92,6 +95,7 @@ def test_ida_mcp_config_store_round_trips_extended_runtime_fields(
     assert updated.wsl_path_bridge is False
     assert updated.ida_default_port == 10020
     assert updated.ida_host == "127.0.0.3"
+    assert updated.gateway_token == "next-secret"
     assert updated.open_in_ida_bundle_dir == "C:/bundle2"
     assert updated.open_in_ida_autonomous is True
     assert updated.auto_start is False
@@ -100,6 +104,7 @@ def test_ida_mcp_config_store_round_trips_extended_runtime_fields(
     assert "wsl_path_bridge = false" in text
     assert "ida_default_port = 10020" in text
     assert 'ida_host = "127.0.0.3"' in text
+    assert 'gateway_token = "next-secret"' in text
     assert 'open_in_ida_bundle_dir = "C:/bundle2"' in text
     assert "open_in_ida_autonomous = true" in text
     assert "auto_start = false" in text

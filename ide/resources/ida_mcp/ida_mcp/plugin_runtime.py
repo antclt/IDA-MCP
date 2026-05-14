@@ -5,6 +5,8 @@ import time
 import traceback
 
 from ida_mcp import registry
+from ida_mcp import heartbeat as _heartbeat
+from ida_mcp import instance_server as _instance_server
 from ida_mcp.config import (
     get_gateway_internal_host,
     get_gateway_internal_port,
@@ -267,6 +269,22 @@ configure_runtime_callbacks(
     ensure_gateway_ready_fn=_ensure_gateway_ready_for_startup,
 )
 
-# Backward-compatible direct attribute access for the entry module (ida_mcp.py)
-from .heartbeat import _cached_input_file, _cached_idb_path  # type: ignore[attr-defined]
-from .instance_server import _server_thread, _startup_thread  # type: ignore[attr-defined]
+
+_LEGACY_HEARTBEAT_ATTRS = {
+    "_MAIN_THREAD_TICK_INTERVAL",
+    "_cached_input_file",
+    "_cached_idb_path",
+}
+_LEGACY_INSTANCE_SERVER_ATTRS = {
+    "_server_thread",
+    "_startup_thread",
+}
+
+
+def __getattr__(name: str):
+    """Resolve legacy module attributes from their current owner modules."""
+    if name in _LEGACY_HEARTBEAT_ATTRS:
+        return getattr(_heartbeat, name)
+    if name in _LEGACY_INSTANCE_SERVER_ATTRS:
+        return getattr(_instance_server, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -33,7 +33,7 @@ class GatewayState(str, Enum):
 DEFAULT_GATEWAY_HOST = "127.0.0.1"
 DEFAULT_GATEWAY_PORT = 11338
 DEFAULT_GATEWAY_PATH = "/mcp"
-DEFAULT_HTTP_HOST = "0.0.0.0"
+DEFAULT_HTTP_HOST = "127.0.0.1"
 DEFAULT_IDA_HOST = "127.0.0.1"
 DEFAULT_IDA_PORT = 10000
 DEFAULT_SERVER_NAME = "IDA-MCP"
@@ -163,6 +163,31 @@ class InstallationActionResult:
     config_path: str | None = None
     created: bool = False
     already_exists: bool = False
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DiaphoraInstallationCheck:
+    """Check result for Diaphora plugin installation."""
+
+    plugin_dir: str | None
+    plugin_py_exists: bool
+    plugin_cfg_exists: bool
+    cfg_path_correct: bool
+    bundle_files_exist: bool
+    summary: str
+    warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DiaphoraInstallationResult:
+    """Result of a Diaphora install action."""
+
+    action: str
+    ok: bool
+    summary: str
+    check: DiaphoraInstallationCheck
+    installed: bool = False
     warnings: list[str] = field(default_factory=list)
 
 

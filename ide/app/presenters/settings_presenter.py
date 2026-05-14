@@ -46,6 +46,7 @@ class SettingsFormState:
     http_host: str
     http_port: int
     http_path: str
+    gateway_token: str
     ida_default_port: int
     ida_host: str
     ida_path: str
@@ -107,6 +108,7 @@ def effective_install_python_path(snapshot: SettingsSnapshot) -> str:
 _STRIP_OR_DEFAULT: dict[str, tuple[str, str]] = {
     "http_host": ("", DEFAULT_HTTP_HOST),
     "http_path": ("", DEFAULT_GATEWAY_PATH),
+    "gateway_token": ("", ""),
     "ida_host": ("", DEFAULT_IDA_HOST),
     "server_name": ("", DEFAULT_SERVER_NAME),
 }

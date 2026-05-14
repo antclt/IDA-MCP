@@ -58,6 +58,9 @@ def resolve_config_path(
         return Path(config_path).expanduser()
 
     plugin_path = Path(plugin_dir).expanduser() if plugin_dir else None
+    if plugin_path:
+        return plugin_path / "ida_mcp" / "config.conf"
+
     candidates = _default_config_candidates(plugin_path)
     for candidate in candidates:
         if candidate.exists():

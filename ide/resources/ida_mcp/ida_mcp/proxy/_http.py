@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from ..config import get_gateway_internal_url, get_request_timeout
+from ..config import get_gateway_auth_headers, get_gateway_internal_url, get_request_timeout
 from ..registry import ensure_registry_server
 
 _log = logging.getLogger(__name__)
@@ -29,7 +29,12 @@ def http_get(path: str) -> Any:
     if not ensure_registry_server():
         return None
     try:
-        with urllib.request.urlopen(get_gateway_internal_url() + path, timeout=get_request_timeout()) as r:
+        req = urllib.request.Request(
+            get_gateway_internal_url() + path,
+            method="GET",
+            headers=get_gateway_auth_headers(),
+        )
+        with urllib.request.urlopen(req, timeout=get_request_timeout()) as r:
             return json.loads(r.read().decode('utf-8') or 'null')
     except urllib.error.HTTPError as exc:
         _log.debug("GET %s returned HTTP %s", path, exc.code)
@@ -44,11 +49,13 @@ def http_post(path: str, obj: dict, timeout: int | None = None) -> Any:
     if not ensure_registry_server():
         return {"error": "Gateway unavailable"}
     data = json.dumps(obj).encode('utf-8')
+    headers = get_gateway_auth_headers()
+    headers["Content-Type"] = "application/json"
     req = urllib.request.Request(
         get_gateway_internal_url() + path,
         data=data,
         method='POST',
-        headers={'Content-Type': 'application/json'}
+        headers=headers,
     )
     effective_timeout = timeout if timeout and timeout > 0 else get_request_timeout()
     try:

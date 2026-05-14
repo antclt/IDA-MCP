@@ -41,3 +41,19 @@ def test_manager_updates_inferred_ida_mcp_config_in_plugin_dir(tmp_path: Path) -
 
     assert updated.config_path == str(inferred_config_path)
     assert "debug = true" in inferred_config_path.read_text(encoding="utf-8")
+
+
+def test_manager_writes_missing_ida_mcp_config_to_plugin_dir(tmp_path: Path) -> None:
+    ide_config_path = tmp_path / "ide_config.json"
+    plugins_dir = tmp_path / "plugins"
+    inferred_config_path = plugins_dir / "ida_mcp" / "config.conf"
+
+    config_store = IdeConfigStore(config_path=ide_config_path)
+    config_store.update(plugin_dir=str(plugins_dir))
+    manager = SupervisorManager(config_store=config_store)
+
+    updated = manager.update_ida_mcp_config(debug=True)
+
+    assert updated.config_path == str(inferred_config_path)
+    assert inferred_config_path.exists()
+    assert "debug = true" in inferred_config_path.read_text(encoding="utf-8")

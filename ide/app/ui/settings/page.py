@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -107,6 +107,15 @@ class SettingsPage(QWidget):
         self._install_python_path.setReadOnly(True)
         self._install_plugin_dir = QLineEdit()
         self._install_plugin_dir.setReadOnly(True)
+        self._ida_mcp_config_path = QLineEdit()
+        self._ida_mcp_config_path.setReadOnly(True)
+
+        # --- Diaphora widgets ---
+        self._diaphora_status = QLabel()
+        self._diaphora_status.setObjectName("settingsFieldDescription")
+        self._diaphora_details = QLabel()
+        self._diaphora_details.setObjectName("settingsFieldDescription")
+        self._diaphora_details.setWordWrap(True)
 
         self._ida_dir = QLineEdit()
         self._ida_dir.setPlaceholderText(self._t("settings.field.ida_dir.placeholder"))
@@ -129,6 +138,8 @@ class SettingsPage(QWidget):
         self._http_port = NoWheelSpinBox()
         self._http_port.setRange(1, 65535)
         self._http_path = QLineEdit()
+        self._gateway_token = QLineEdit()
+        self._gateway_token.setEchoMode(QLineEdit.EchoMode.Password)
         self._ida_default_port = NoWheelSpinBox()
         self._ida_default_port.setRange(1, 65535)
         self._ida_host = QLineEdit()
@@ -285,6 +296,11 @@ class SettingsPage(QWidget):
                         self._t("settings.field.plugin_dir.desc"),
                         self._plugin_dir,
                     ),
+                    self._build_field_row(
+                        self._t("settings.field.ida_mcp_config_path"),
+                        self._t("settings.field.ida_mcp_config_path.desc"),
+                        self._ida_mcp_config_path,
+                    ),
                 ],
             )
         )
@@ -340,6 +356,11 @@ class SettingsPage(QWidget):
                         self._t("settings.field.http_path"),
                         self._t("settings.field.http_path.desc"),
                         self._http_path,
+                    ),
+                    self._build_field_row(
+                        self._t("settings.field.gateway_token"),
+                        self._t("settings.field.gateway_token.desc"),
+                        self._gateway_token,
                     ),
                     self._build_checkbox_row(
                         self._debug,
@@ -502,6 +523,17 @@ class SettingsPage(QWidget):
                 self._t("settings.category.install"),
                 self._t("settings.install.placeholder"),
                 [self._install_notes],
+            )
+        )
+
+        layout.addWidget(
+            self._build_config_group(
+                self._t("settings.diaphora.title"),
+                self._t("settings.diaphora.desc"),
+                [
+                    self._diaphora_status,
+                    self._diaphora_details,
+                ],
             )
         )
 
@@ -1341,6 +1373,9 @@ class SettingsPage(QWidget):
         form_state = snapshot_to_form_state(snapshot)
         self._ida_dir.setText(form_state.ida_dir)
         self._plugin_dir.setText(form_state.plugin_dir)
+        self._ida_mcp_config_path.setText(
+            snapshot.ida_mcp_config.config_path or ""
+        )
         self._ide_request_timeout.setValue(form_state.ide_request_timeout)
         self._install_python_path.setText(effective_install_python_path(snapshot))
         self._install_plugin_dir.setText(form_state.plugin_dir)
@@ -1350,6 +1385,10 @@ class SettingsPage(QWidget):
 
         # Defer installation check to a background worker — never block UI.
         self._install_ctrl.run_check()
+
+        # Refresh Diaphora status after the page is displayed. This check can
+        # touch plugin directories, so it should not slow window construction.
+        QTimer.singleShot(0, self._refresh_diaphora_status)
 
         self._form_binder.apply_form_state(form_state)
 
@@ -1431,11 +1470,45 @@ class SettingsPage(QWidget):
         )
 
     def _set_install_buttons_enabled(self, enabled: bool) -> None:
-        page = self._stack.widget(1)  # install page
+        page = self._stack.widget(2)  # install page
         if page is None:
             return
         for button in page.findChildren(QPushButton):
             button.setEnabled(enabled)
+
+    # ------------------------------------------------------------------
+    # Diaphora install
+    # ------------------------------------------------------------------
+
+    def _refresh_diaphora_status(self) -> None:
+        """Update the Diaphora status label from a background check."""
+        try:
+            check = self._settings_service.check_diaphora_installation()
+        except AttributeError:
+            return
+        installed = (
+            check.plugin_py_exists
+            and check.plugin_cfg_exists
+            and check.cfg_path_correct
+            and check.bundle_files_exist
+        )
+        if installed:
+            status_text = self._t("settings.diaphora.installed")
+        else:
+            status_text = self._t("settings.diaphora.not_installed")
+
+        parts = []
+        parts.append(f"{self._t('settings.diaphora.plugin_py')}: {self._bool_text(check.plugin_py_exists)}")
+        parts.append(f"{self._t('settings.diaphora.plugin_cfg')}: {self._bool_text(check.plugin_cfg_exists)}")
+        if check.plugin_cfg_exists:
+            parts.append(f"{self._t('settings.diaphora.cfg_path_ok')}: {self._bool_text(check.cfg_path_correct)}")
+        parts.append(f"Bundle files: {self._bool_text(check.bundle_files_exist)}")
+        if check.warnings:
+            parts.append("")
+            parts.extend(f"- {w}" for w in check.warnings)
+
+        self._diaphora_status.setText(status_text)
+        self._diaphora_details.setText("\n".join(parts))
 
     # ------------------------------------------------------------------
     # Reusable widget builders

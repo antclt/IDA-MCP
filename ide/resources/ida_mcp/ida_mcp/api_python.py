@@ -17,7 +17,6 @@ from .sync import idawrite
 # IDA module imports
 try:
     import idaapi  # type: ignore
-    import idc  # type: ignore
     import ida_bytes  # type: ignore
     import ida_funcs  # type: ignore
     import ida_hexrays  # type: ignore
@@ -33,7 +32,6 @@ try:
     import ida_ida  # type: ignore
 except ImportError:
     idaapi = None
-    idc = None
     ida_bytes = None
     ida_funcs = None
     ida_hexrays = None
@@ -77,7 +75,6 @@ def py_eval(
             exec_globals = {
                 "__builtins__": __builtins__,
                 "idaapi": idaapi,
-                "idc": idc,
                 "idautils": _lazy_import("idautils"),
                 "ida_allins": _lazy_import("ida_allins"),
                 "ida_auto": _lazy_import("ida_auto"),
@@ -103,7 +100,6 @@ def py_eval(
                 "ida_search": _lazy_import("ida_search"),
                 "ida_segment": ida_segment,
                 "ida_strlist": _lazy_import("ida_strlist"),
-                "ida_struct": _lazy_import("ida_struct"),
                 "ida_typeinf": ida_typeinf,
                 "ida_ua": _lazy_import("ida_ua"),
                 "ida_xref": ida_xref,

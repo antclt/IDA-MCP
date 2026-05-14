@@ -18,7 +18,7 @@
 
 说明：
 
-- `http_host` 可以绑定到 `0.0.0.0`，但客户端连接地址仍应使用 `127.0.0.1`
+- `http_host` 默认绑定 `127.0.0.1`；若绑定到 `0.0.0.0`，非 loopback 请求需配置并提供 `gateway_token`
 - Gateway MCP proxy 的默认 URL 由 `config.conf` 中的 `http_host/http_port/http_path` 决定
 - Direct instance 端点固定为 `http://127.0.0.1:<instance_port>/mcp/`
 
@@ -155,7 +155,7 @@ proxy/control 面的包装错误常见格式：
 
 以下工具在 Gateway MCP proxy 上也可用，但会额外接受 `port?` 与 `timeout?`。
 
-如果 `enable_unsafe=false`，则 `py_eval` 与全部 `dbg_*` 工具不会注册。
+如果 `enable_unsafe=false`，则 `py_eval`、`patch_bytes` 与全部 `dbg_*` 工具不会注册。
 
 ### 4.1 Core Tools
 
@@ -240,7 +240,7 @@ proxy/control 面的包装错误常见格式：
 
 | Tool | Parameters | Request Example | Expected Response |
 | --- | --- | --- | --- |
-| `stack_frame` | `addr: int | str` | `{"addr":"main"}` | `[{query, name, start_ea, method?, variables, frame_structure?, error?, note?}]` |
+| `stack_frame` | `addr: int | str` | `{"addr":"main"}` | `[{query, name, start_ea, method?, variables, frame_variables?, local_variables?, error?, note?}]` |
 | `declare_stack` | `items: [{function_address, offset, name, type?, size?}]` | `{"items":[{"function_address":"0x401000","offset":-0x20,"name":"buf","type":"char[32]","size":32}]}` | `[{function_address, offset, name, declared_type?, size?, changed, error?, note?}]` |
 | `delete_stack` | `items: [{function_address, name}]` | `{"items":[{"function_address":"0x401000","name":"buf"}]}` | `[{function_address, name, changed, deleted, error}]` |
 
@@ -351,7 +351,7 @@ proxy/control 面的包装错误常见格式：
 | `ida://function/{addr}/decompile` | `addr` path param | `{"uri":"ida://function/0x401000/decompile"}` | `{kind:"function_decompile", address, name, end_address, decompiled}` |
 | `ida://function/{addr}/disasm` | `addr` path param | `{"uri":"ida://function/0x401000/disasm"}` | `{kind:"function_disasm", address, name, end_address, count, items}`；`items` 为 `[{address, bytes, text, comment}]` |
 | `ida://function/{addr}/basic_blocks` | `addr` path param | `{"uri":"ida://function/0x401000/basic_blocks"}` | `{kind:"function_basic_blocks", address, name, end_address, count, items}` |
-| `ida://function/{addr}/stack` | `addr` path param | `{"uri":"ida://function/0x401000/stack"}` | `{kind:"function_stack", address, name, method, count, items, frame_structure?}` |
+| `ida://function/{addr}/stack` | `addr` path param | `{"uri":"ida://function/0x401000/stack"}` | `{kind:"function_stack", address, name, method, count, items, frame_variables?, local_variables?}` |
 | `ida://strings` | none | `{"uri":"ida://strings"}` | `{kind:"strings", count, items:[{address, length, type, text}]}` |
 | `ida://globals` | none | `{"uri":"ida://globals"}` | `{kind:"globals", count, items:[{address, name, size}]}` |
 | `ida://types` | none | `{"uri":"ida://types"}` | `{kind:"types", count, items:[{ordinal, name, decl}]}` |
@@ -378,6 +378,14 @@ Base URL:
 ```text
 http://127.0.0.1:11338/internal
 ```
+
+默认 gateway 仅监听 `127.0.0.1`。如果配置为非本机监听，非 loopback 请求必须携带共享 token：
+
+```http
+Authorization: Bearer <gateway_token>
+```
+
+也支持 `X-IDA-MCP-Token: <gateway_token>`。`gateway_token` 为空时只允许 loopback 客户端访问。
 
 | Method | Path | Request Body | Expected Response |
 | --- | --- | --- | --- |

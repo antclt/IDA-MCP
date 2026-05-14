@@ -7,13 +7,14 @@ Configuration Options
 Transport switches:
     - enable_stdio: whether to enable stdio mode (default false)
     - enable_http: whether to enable HTTP proxy mode (default true)
-    - enable_unsafe: whether to enable unsafe tools (default true)
+    - enable_unsafe: whether to enable unsafe tools (default false)
     - wsl_path_bridge: whether to enable WSL/Windows path bridging (default false)
 
 HTTP proxy config:
     - http_host: gateway bind address (default 127.0.0.1)
     - http_port: gateway listen port (default 11338)
     - http_path: MCP endpoint path (default /mcp)
+    - gateway_token: optional shared bearer token for non-loopback gateway access
 
 IDA instance config:
     - ida_default_port: starting port for IDA instance MCP (default 10000)
@@ -44,12 +45,13 @@ _DEFAULT_CONFIG = {
     # transport switches
     "enable_stdio": False,  # whether to enable stdio mode (coordinator)
     "enable_http": True,  # whether to enable HTTP proxy mode
-    "enable_unsafe": True,  # whether to enable unsafe tools
+    "enable_unsafe": False,  # whether to enable unsafe tools
     "wsl_path_bridge": False,  # whether to enable WSL/Windows path bridging
     # HTTP proxy config
     "http_host": "127.0.0.1",
     "http_port": 11338,
     "http_path": "/mcp",
+    "gateway_token": None,
     # IDA instance config
     "ida_default_port": 10000,
     "ida_path": None,  # IDA executable path
@@ -231,6 +233,28 @@ def get_http_url() -> str:
     return f"http://{host}:{port}{path}"
 
 
+def get_gateway_token() -> str | None:
+    """Get the optional shared gateway bearer token."""
+    config = load_config()
+    token = config.get("gateway_token")
+    if isinstance(token, str):
+        token = token.strip()
+        if token:
+            return token
+    return None
+
+
+def get_gateway_auth_headers() -> dict[str, str]:
+    """Get HTTP headers for calls to a token-protected gateway."""
+    token = get_gateway_token()
+    if not token:
+        return {}
+    return {
+        "Authorization": f"Bearer {token}",
+        "X-IDA-MCP-Token": token,
+    }
+
+
 # ============================================================================
 # IDA instance config accessors
 # ============================================================================
@@ -327,7 +351,7 @@ def is_http_enabled() -> bool:
 def is_unsafe_enabled() -> bool:
     """Whether unsafe tools are enabled."""
     config = load_config()
-    return _coerce_bool(config.get("enable_unsafe", True), True)
+    return _coerce_bool(config.get("enable_unsafe", False), False)
 
 
 def is_wsl_path_bridge_enabled() -> bool:

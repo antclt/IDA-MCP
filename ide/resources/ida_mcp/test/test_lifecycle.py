@@ -17,13 +17,16 @@ from contextlib import asynccontextmanager
 from unittest.mock import patch
 from starlette.testclient import TestClient
 
-# 添加项目根目录到 sys.path 以便导入 ida_mcp 模块
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# 添加 ida_mcp 子项目根目录到 sys.path 以便导入 ida_mcp 模块
+IDA_MCP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if IDA_MCP_ROOT not in sys.path:
+    sys.path.insert(0, IDA_MCP_ROOT)
 
 from ida_mcp import config
+from ida_mcp import instance_registry
+from ida_mcp import instance_server
 from ida_mcp import registry
+from ida_mcp import registry_routes
 from ida_mcp import registry_server
 from ida_mcp.proxy import lifecycle
 from ida_mcp.proxy import _state as proxy_state
@@ -34,9 +37,10 @@ pytestmark = pytest.mark.lifecycle
 
 @pytest.fixture
 def isolated_gateway_state(monkeypatch):
-    monkeypatch.setattr(registry_server, "_instances", [])
-    monkeypatch.setattr(registry_server, "_call_locks", {})
-    monkeypatch.setattr(registry_server, "_current_instance_port", None)
+    monkeypatch.setattr(instance_registry, "_instances", [])
+    monkeypatch.setattr(instance_registry, "_call_locks", {})
+    monkeypatch.setattr(instance_registry, "_current_instance_port", None)
+    monkeypatch.setattr(instance_registry, "_last_reap_ts", [0.0])
 
 
 class _DummySocketConnection:
@@ -53,9 +57,7 @@ def _load_plugin_module(monkeypatch):
     The plugin entry-point lives at ``ide/resources/ida_mcp/ida_mcp.py``.
     """
     module_name = f"ida_mcp_plugin_test_{time.time_ns()}"
-    plugin_path = os.path.join(
-        PROJECT_ROOT, "ide", "resources", "ida_mcp", "ida_mcp.py"
-    )
+    plugin_path = os.path.join(IDA_MCP_ROOT, "ida_mcp.py")
     fake_idaapi = types.SimpleNamespace(
         plugin_t=object,
         PLUGIN_KEEP=1,
@@ -82,12 +84,10 @@ class TestLifecycleOpen:
     Runs first to initialize environment.
     """
 
-    def test_open_in_ida_launch(self, tool_caller):
-        """Test launching IDA."""
-        # Use project sample file
-        sample_path = os.path.join(PROJECT_ROOT, "test", "samples", "complex.exe")
+    def test_open_and_close_simple_ida_instance(self, tool_caller):
+        """Open simple.exe, locate its registered MCP port, then close only that instance."""
+        sample_path = os.path.join(IDA_MCP_ROOT, "test", "samples", "simple.exe")
 
-        # Ensure file exists
         if not os.path.exists(sample_path):
             pytest.skip(f"Sample file not found: {sample_path}")
 
@@ -105,26 +105,56 @@ class TestLifecycleOpen:
         assert "status" in result
         assert result["status"] == "ok"
         assert "Launched IDA" in result["message"]
+        requested_port = result.get("requested_port")
+        assert isinstance(requested_port, int), f"open_in_ida did not return requested_port: {result}"
 
-        # Wait for IDA to be ready
-        print("\nWaiting for IDA to initialize...")
-        max_retries = 30
-        for i in range(max_retries):
+        print(f"\nWaiting for simple.exe instance on port {requested_port}...")
+        matched_instance = None
+        for i in range(60):
             try:
-                # Try to list instances to see if our instance registered
                 instances = tool_caller("list_instances", {})
-                if isinstance(instances, list) and len(instances) > 0:
-                    print(f"IDA instance found after {i + 1} retries.")
-                    # Wait a bit more for full initialization
-                    time.sleep(5)
+                if isinstance(instances, list):
+                    for instance in instances:
+                        if instance.get("port") != requested_port:
+                            continue
+                        input_name = os.path.basename(str(instance.get("input_file") or "")).lower()
+                        state = str(instance.get("effective_state") or "")
+                        if "simple.exe" in input_name and state == "ready":
+                            matched_instance = instance
+                            break
+                if matched_instance is not None:
+                    print(f"simple.exe instance registered after {i + 1} retries.")
                     break
             except Exception:
                 pass
-            time.sleep(2)
+            time.sleep(1)
+
+        assert matched_instance is not None, (
+            f"simple.exe did not register on requested port {requested_port}"
+        )
+
+        metadata = tool_caller("get_metadata", {"port": requested_port, "timeout": 60})
+        assert isinstance(metadata, dict), f"Expected metadata dict, got: {metadata}"
+        assert "error" not in metadata, f"simple.exe metadata failed: {metadata.get('error')}"
+        assert "simple.exe" in str(metadata.get("input_file", "")).lower()
+
+        close_result = tool_caller(
+            "close_ida",
+            {"port": requested_port, "save": False, "timeout": 60},
+        )
+        assert isinstance(close_result, dict), f"Expected close result dict: {close_result}"
+        assert "error" not in close_result, f"close_ida failed: {close_result.get('error')}"
+        assert close_result.get("status") == "ok", f"Unexpected close result: {close_result}"
+
+        for _ in range(30):
+            instances = tool_caller("list_instances", {})
+            if isinstance(instances, list) and not any(
+                item.get("port") == requested_port for item in instances
+            ):
+                break
+            time.sleep(1)
         else:
-            print(
-                "Warning: IDA instance did not register in time. Subsequent tests might fail."
-            )
+            pytest.fail(f"simple.exe instance still registered after close: port {requested_port}")
 
 
 class TestLifecycleErrors:
@@ -736,19 +766,9 @@ class TestLifecycleClose:
     Runs last to clean up environment.
     """
 
-    def test_close_ida(self, tool_caller):
-        """Test closing IDA (runs last)."""
-        # This will actually close IDA!
-        print("\nAttempting to close IDA...")
-        result = tool_caller("close_ida", {"save": False})
-
-        print(f"Close IDA result: {result}")
-        assert isinstance(result, dict), f"Expected dict, got {type(result)}: {result}"
-        assert "error" not in result, f"close_ida failed: {result.get('error')}"
-        assert result.get("status") == "ok", f"Unexpected status: {result}"
-
-        # Wait a bit for process cleanup
-        time.sleep(2)
+    def test_close_ida_is_covered_by_simple_lifecycle(self):
+        """close_ida is exercised by test_open_and_close_simple_ida_instance."""
+        assert True
 
 
 class TestRegistryStartup:
@@ -756,48 +776,53 @@ class TestRegistryStartup:
 
     def test_instance_startup_checks_gateway_before_listener_launch(self, monkeypatch):
         """实例启动必须先完成 gateway preflight，再启动 listener。"""
-        plugin = _load_plugin_module(monkeypatch)
-        pr = plugin.plugin_runtime
         events = []
 
         monkeypatch.setattr(
-            pr,
-            "_ensure_gateway_ready_for_startup",
+            instance_server,
+            "_ensure_gateway_ready_fn",
             lambda: events.append("gateway") or True,
         )
         monkeypatch.setattr(
-            pr,
+            instance_server,
+            "_update_lifecycle_state_fn",
+            lambda port, state, ready: events.append(("state", port, state, ready)),
+        )
+        monkeypatch.setattr(
+            instance_server,
             "_start_instance_server_threads",
             lambda host, port: events.append(("listener", host, port)),
         )
 
-        pr.start_server_async("127.0.0.1", 10000)
-        if pr._startup_thread:
-            pr._startup_thread.join(timeout=1)
+        instance_server.start_instance_server_threads("127.0.0.1", 10000)
+        if instance_server._startup_thread:
+            instance_server._startup_thread.join(timeout=1)
 
-        assert events == ["gateway", ("listener", "127.0.0.1", 10000)]
+        assert events == [
+            "gateway",
+            ("state", 10000, "analyzing", False),
+            ("listener", "127.0.0.1", 10000),
+        ]
 
     def test_instance_startup_skips_listener_when_gateway_preflight_fails(
         self, monkeypatch
     ):
         """gateway 不健康时，不应先把实例 MCP listener 暴露出来。"""
-        plugin = _load_plugin_module(monkeypatch)
-        pr = plugin.plugin_runtime
         listener_started = []
 
-        monkeypatch.setattr(pr, "_ensure_gateway_ready_for_startup", lambda: False)
+        monkeypatch.setattr(instance_server, "_ensure_gateway_ready_fn", lambda: False)
         monkeypatch.setattr(
-            pr,
+            instance_server,
             "_start_instance_server_threads",
             lambda host, port: listener_started.append((host, port)),
         )
 
-        pr.start_server_async("127.0.0.1", 10000)
-        if pr._startup_thread:
-            pr._startup_thread.join(timeout=1)
+        instance_server.start_instance_server_threads("127.0.0.1", 10000)
+        if instance_server._startup_thread:
+            instance_server._startup_thread.join(timeout=1)
 
         assert listener_started == []
-        assert pr._server_thread is None
+        assert instance_server._server_thread is None
 
     def test_build_app_uses_fastmcp_lifespan(self):
         """网关应复用 FastMCP lifespan，以便 Streamable HTTP session manager 正确初始化。"""
@@ -822,10 +847,10 @@ class TestRegistryStartup:
             app = registry_server._build_app()
 
         async def _run_lifespan():
-            assert registry_server._proxy_ready is False
+            assert instance_registry._proxy_ready is False
             async with app.router.lifespan_context(app):
-                assert registry_server._proxy_ready is True
-            assert registry_server._proxy_ready is False
+                assert instance_registry._proxy_ready is True
+            assert instance_registry._proxy_ready is False
 
         import asyncio
 
@@ -842,7 +867,7 @@ class TestRegistryStartup:
             raise ConnectionRefusedError("refused")
 
         monkeypatch.setattr(
-            registry_server.socket, "create_connection", _raise_unreachable
+            registry_routes.socket, "create_connection", _raise_unreachable
         )
 
         with TestClient(app) as client:
@@ -866,7 +891,7 @@ class TestRegistryStartup:
         assert len(instances) == 1
         instance = instances[0]
         assert instance["input_file"] == "sample-renamed.exe"
-        assert instance["health"] == registry_server.INSTANCE_HEALTH_UNREACHABLE
+        assert instance["health"] == instance_registry.INSTANCE_HEALTH_UNREACHABLE
         assert instance["last_error_kind"] == "connect"
         assert instance["consecutive_failures"] == 1
         assert instance["last_failure_at"] is not None
@@ -893,7 +918,7 @@ class TestRegistryStartup:
                 raise asyncio.TimeoutError()
 
         monkeypatch.setattr(
-            registry_server.socket,
+            registry_routes.socket,
             "create_connection",
             lambda *args, **kwargs: _DummySocketConnection(),
         )
@@ -920,7 +945,7 @@ class TestRegistryStartup:
 
         assert len(instances) == 1
         instance = instances[0]
-        assert instance["health"] == registry_server.INSTANCE_HEALTH_UNRESPONSIVE
+        assert instance["health"] == instance_registry.INSTANCE_HEALTH_UNRESPONSIVE
         assert instance["last_error_kind"] == "timeout"
         assert instance["consecutive_failures"] == 1
 
@@ -970,11 +995,11 @@ class TestRegistryStartup:
             lambda: [
                 {
                     "port": 10000,
-                    "health": registry_server.INSTANCE_HEALTH_HEALTHY,
+                    "health": instance_registry.INSTANCE_HEALTH_HEALTHY,
                     "quarantined_until": time.time() + 60,
                 },
-                {"port": 10002, "health": registry_server.INSTANCE_HEALTH_UNREACHABLE},
-                {"port": 10001, "health": registry_server.INSTANCE_HEALTH_HEALTHY},
+                {"port": 10002, "health": instance_registry.INSTANCE_HEALTH_UNREACHABLE},
+                {"port": 10001, "health": instance_registry.INSTANCE_HEALTH_HEALTHY},
             ],
         )
 
@@ -988,8 +1013,8 @@ class TestRegistryStartup:
             proxy_state,
             "get_instances",
             lambda: [
-                {"port": 10001, "health": registry_server.INSTANCE_HEALTH_HEALTHY},
-                {"port": 10000, "health": registry_server.INSTANCE_HEALTH_HEALTHY},
+                {"port": 10001, "health": instance_registry.INSTANCE_HEALTH_HEALTHY},
+                {"port": 10000, "health": instance_registry.INSTANCE_HEALTH_HEALTHY},
             ],
         )
 
@@ -1016,7 +1041,7 @@ class TestRegistryStartup:
         self, monkeypatch, isolated_gateway_state
     ):
         app = registry_server._build_internal_app()
-        stale_tick = time.time() - registry_server.MAIN_THREAD_STALE_SECONDS - 1
+        stale_tick = time.time() - instance_registry.MAIN_THREAD_STALE_SECONDS - 1
 
         with TestClient(app) as client:
             assert (
@@ -1036,7 +1061,7 @@ class TestRegistryStartup:
             instance = client.get("/instances").json()[0]
 
             with patch.object(
-                registry_server.socket,
+                registry_routes.socket,
                 "create_connection",
                 side_effect=AssertionError("should not probe stale instance"),
             ):
@@ -1045,7 +1070,7 @@ class TestRegistryStartup:
                 )
 
         assert (
-            instance["effective_state"] == registry_server.INSTANCE_HEALTH_UNRESPONSIVE
+            instance["effective_state"] == instance_registry.INSTANCE_HEALTH_UNRESPONSIVE
         )
         assert instance["main_thread_stale"] is True
         assert response.status_code == 504
@@ -1058,7 +1083,7 @@ class TestRegistryStartup:
                 {
                     "port": 10000,
                     "ready": True,
-                    "effective_state": registry_server.INSTANCE_HEALTH_UNRESPONSIVE,
+                    "effective_state": instance_registry.INSTANCE_HEALTH_UNRESPONSIVE,
                 },
                 {"port": 10001, "ready": True, "effective_state": "ready"},
             ],
