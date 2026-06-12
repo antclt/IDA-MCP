@@ -158,7 +158,7 @@ proxy/control 面的包装错误常见格式：
 
 以下工具在 Gateway MCP proxy 上也可用，但会额外接受 `port?` 与 `timeout?`。
 
-如果 `enable_unsafe=false`，则 `py_eval`、`patch_bytes` 与全部 `dbg_*` 工具不会注册。
+如果 `enable_unsafe=false`，则 `py_eval`、`patch_bytes`、`apply_patch` 与全部 `dbg_*` 工具不会注册。
 
 ### 4.1 Core Tools
 
@@ -238,6 +238,7 @@ proxy/control 面的包装错误常见格式：
 | `rename_local_variable` | `function_address: int | str`, `old_name: str`, `new_name: str` | `{"function_address":"0x401000","old_name":"v1","new_name":"ctx"}` | `{function, start_ea, old_name, new_name, changed}` 或 `{error}` |
 | `rename_global_variable` | `old_name: str`, `new_name: str` | `{"old_name":"dword_404000","new_name":"g_state"}` | `{ea, old_name, new_name, changed, note?}` 或 `{error}` |
 | `patch_bytes` | `items: [{address, bytes}]` | `{"items":[{"address":"0x401000","bytes":"90 90 90"}]}` | `[{address, size, patched, old_bytes, new_bytes, error}]` |
+| `apply_patch` | `output_path?: str`, `overwrite?: bool` | `{"output_path":"a.patched.exe","overwrite":false}` | `{input_file, output_file, input_size, applied, skipped, patches, skipped_patches, truncated}` 或 `{error}` |
 
 ### 4.6 Stack Tools
 

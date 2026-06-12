@@ -125,6 +125,7 @@ _API_CATEGORIES = {
     "rename_local_variable": "modify",
     "rename_global_variable": "modify",
     "patch_bytes": "modify",
+    "apply_patch": "modify",
     "create_function": "modeling",
     "delete_function": "modeling",
     "make_code": "modeling",

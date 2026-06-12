@@ -11,6 +11,7 @@ Proxy parameter mappings:
 - rename_local_variable: function_address (str), old_name, new_name
 - rename_global_variable: old_name, new_name
 - patch_bytes: items (List of {address, bytes})
+- apply_patch: output_path, overwrite
 
 Run with:
     pytest -m modify        # Run only modify module tests
@@ -318,3 +319,102 @@ class TestPatchBytesHelpers:
 
         assert result[0]["patched"] == 1
         assert calls["invalidate"] == 1
+
+
+class TestApplyPatchHelpers:
+    def _patch_ida(self, monkeypatch, input_file, visits):
+        class FakeIdaApi:
+            BADADDR = -1
+
+            @staticmethod
+            def get_input_file_path():
+                return str(input_file)
+
+        class FakeBytes:
+            @staticmethod
+            def visit_patched_bytes(start, end, callback):
+                assert start == 0
+                assert end == FakeIdaApi.BADADDR
+                for args in visits:
+                    callback(*args)
+
+        monkeypatch.setattr(api_modify, "idaapi", FakeIdaApi())
+        monkeypatch.setattr(api_modify, "ida_bytes", FakeBytes())
+
+    def test_apply_patch_writes_default_export_file(self, monkeypatch, tmp_path):
+        input_file = tmp_path / "sample.exe"
+        input_file.write_bytes(b"ABCD")
+        self._patch_ida(
+            monkeypatch,
+            input_file,
+            [
+                (0x401001, 1, ord("B"), ord("Z")),
+                (0x401003, 3, ord("D"), ord("Y")),
+            ],
+        )
+
+        result = api_modify.apply_patch.__wrapped__()
+
+        assert "error" not in result
+        assert result["applied"] == 2
+        output_file = tmp_path / "sample.patched.exe"
+        assert result["output_file"] == str(output_file)
+        assert output_file.read_bytes() == b"AZCY"
+        assert input_file.read_bytes() == b"ABCD"
+
+    def test_apply_patch_rejects_existing_output_without_overwrite(self, monkeypatch, tmp_path):
+        input_file = tmp_path / "sample.bin"
+        output_file = tmp_path / "out.bin"
+        input_file.write_bytes(b"ABCD")
+        output_file.write_bytes(b"old")
+        self._patch_ida(monkeypatch, input_file, [(0x401000, 0, ord("A"), ord("X"))])
+
+        result = api_modify.apply_patch.__wrapped__(str(output_file))
+
+        assert result["error"] == "output file already exists"
+        assert output_file.read_bytes() == b"old"
+
+    def test_apply_patch_overwrites_existing_output_when_requested(self, monkeypatch, tmp_path):
+        input_file = tmp_path / "sample.bin"
+        output_file = tmp_path / "out.bin"
+        input_file.write_bytes(b"ABCD")
+        output_file.write_bytes(b"old")
+        self._patch_ida(monkeypatch, input_file, [(0x401000, 0, ord("A"), ord("X"))])
+
+        result = api_modify.apply_patch.__wrapped__(str(output_file), overwrite=True)
+
+        assert "error" not in result
+        assert output_file.read_bytes() == b"XBCD"
+
+    def test_apply_patch_reports_skipped_non_file_backed_patches(self, monkeypatch, tmp_path):
+        input_file = tmp_path / "sample.bin"
+        input_file.write_bytes(b"ABCD")
+        self._patch_ida(monkeypatch, input_file, [(0x500000, -1, ord("A"), ord("X"))])
+
+        result = api_modify.apply_patch.__wrapped__()
+
+        assert result["error"] == "no file-backed patches to apply"
+        assert result["skipped"] == 1
+        assert not (tmp_path / "sample.patched.bin").exists()
+
+    def test_apply_patch_resolves_relative_output_next_to_input(self, monkeypatch, tmp_path):
+        input_file = tmp_path / "sample.bin"
+        input_file.write_bytes(b"ABCD")
+        self._patch_ida(monkeypatch, input_file, [(0x401002, 2, ord("C"), ord("Q"))])
+
+        result = api_modify.apply_patch.__wrapped__("exports/patched.bin")
+
+        output_file = tmp_path / "exports" / "patched.bin"
+        assert "error" not in result
+        assert result["output_file"] == str(output_file)
+        assert output_file.read_bytes() == b"ABQD"
+
+    def test_apply_patch_rejects_input_file_as_output(self, monkeypatch, tmp_path):
+        input_file = tmp_path / "sample.bin"
+        input_file.write_bytes(b"ABCD")
+        self._patch_ida(monkeypatch, input_file, [(0x401000, 0, ord("A"), ord("X"))])
+
+        result = api_modify.apply_patch.__wrapped__(str(input_file), overwrite=True)
+
+        assert result["error"] == "output_path must not be the input file"
+        assert input_file.read_bytes() == b"ABCD"

@@ -120,7 +120,7 @@ def test_proxy_skips_unsafe_backend_tools_when_disabled(monkeypatch):
 
     register_tools.register_tools(server)
 
-    for tool_name in ("py_eval", "dbg_regs", "dbg_continue", "dbg_write_mem"):
+    for tool_name in ("py_eval", "patch_bytes", "apply_patch", "dbg_regs", "dbg_continue", "dbg_write_mem"):
         assert tool_name not in server.tool_names
 
 
@@ -128,10 +128,13 @@ def test_tool_metadata_tracks_unsafe_and_execution_mode():
     ensure_api_modules_loaded()
 
     py_eval_spec = get_tool_specs()["py_eval"]
+    apply_patch_spec = get_tool_specs()["apply_patch"]
     dbg_regs_spec = get_tool_specs()["dbg_regs"]
 
     assert py_eval_spec.unsafe is True
+    assert apply_patch_spec.unsafe is True
     assert py_eval_spec.execution_mode == "write"
+    assert apply_patch_spec.execution_mode == "read"
     assert dbg_regs_spec.unsafe is True
 
 

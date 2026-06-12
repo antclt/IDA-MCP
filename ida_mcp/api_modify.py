@@ -6,10 +6,13 @@ Provides tools:
     - rename_local_variable rename local variable
     - rename_global_variable rename global variable
     - patch_bytes          byte patching
+    - apply_patch          export patched input file
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
 from typing import Annotated, Optional, List, Dict, Any, Union
 
 from .rpc import tool, unsafe
@@ -449,3 +452,163 @@ def patch_bytes(
             cache_invalidated = True
     
     return results
+
+
+def _default_patched_output_path(input_path: str) -> str:
+    root, ext = os.path.splitext(input_path)
+    if ext:
+        return f"{root}.patched{ext}"
+    return f"{input_path}.patched"
+
+
+def _resolve_patched_output_path(input_path: str, output_path: Optional[str]) -> str:
+    if output_path is None or not str(output_path).strip():
+        return os.path.abspath(_default_patched_output_path(input_path))
+
+    raw_path = os.path.expandvars(os.path.expanduser(str(output_path).strip()))
+    if not os.path.isabs(raw_path):
+        raw_path = os.path.join(os.path.dirname(input_path), raw_path)
+
+    if os.path.isdir(raw_path):
+        raw_path = os.path.join(raw_path, os.path.basename(_default_patched_output_path(input_path)))
+
+    return os.path.abspath(raw_path)
+
+
+def _collect_patched_file_bytes(input_size: int) -> tuple[list[dict], list[dict]]:
+    applied: list[dict] = []
+    skipped: list[dict] = []
+
+    def visit(ea: int, fpos: int, org_val: int, patch_val: int) -> int:
+        item = {
+            "address": hex_addr(int(ea)),
+            "file_offset": int(fpos) if int(fpos) >= 0 else None,
+            "old_byte": f"{int(org_val) & 0xFF:02X}" if int(org_val) >= 0 else None,
+            "new_byte": f"{int(patch_val) & 0xFF:02X}" if 0 <= int(patch_val) <= 0xFF else None,
+        }
+
+        if int(fpos) < 0:
+            item["reason"] = "patch has no input-file offset"
+            skipped.append(item)
+            return 0
+        if int(fpos) >= input_size:
+            item["reason"] = "patch offset is outside input file"
+            skipped.append(item)
+            return 0
+        if not 0 <= int(patch_val) <= 0xFF:
+            item["reason"] = "patch byte is invalid"
+            skipped.append(item)
+            return 0
+
+        applied.append(item)
+        return 0
+
+    try:
+        ida_bytes.visit_patched_bytes(0, idaapi.BADADDR, visit)
+    except AttributeError:
+        raise RuntimeError("ida_bytes.visit_patched_bytes is not available")
+
+    return applied, skipped
+
+
+@unsafe
+@tool
+@idaread
+def apply_patch(
+    output_path: Annotated[
+        Optional[str],
+        "Output file path. Defaults to '<input>.patched<ext>'; relative paths are resolved next to the input file.",
+    ] = None,
+    overwrite: Annotated[bool, "Overwrite output_path if it already exists"] = False,
+) -> dict:
+    """Apply IDB byte patches to a copied input file and export it."""
+    try:
+        input_path = idaapi.get_input_file_path()
+    except Exception as e:
+        return {"error": f"failed to get input file path: {e}"}
+
+    if not input_path:
+        return {"error": "input file path is empty"}
+
+    input_path = os.path.abspath(str(input_path))
+    if not os.path.isfile(input_path):
+        return {"error": "input file not found", "input_file": input_path}
+
+    try:
+        input_size = os.path.getsize(input_path)
+    except OSError as e:
+        return {"error": f"failed to stat input file: {e}", "input_file": input_path}
+
+    try:
+        applied, skipped = _collect_patched_file_bytes(input_size)
+    except Exception as e:
+        return {"error": f"failed to collect patched bytes: {e}", "input_file": input_path}
+
+    if not applied:
+        return {
+            "error": "no file-backed patches to apply",
+            "input_file": input_path,
+            "patch_count": 0,
+            "skipped": len(skipped),
+            "skipped_patches": skipped[:100],
+            "truncated": len(skipped) > 100,
+        }
+
+    output_file = _resolve_patched_output_path(input_path, output_path)
+
+    if os.path.normcase(input_path) == os.path.normcase(output_file):
+        return {
+            "error": "output_path must not be the input file",
+            "input_file": input_path,
+            "output_file": output_file,
+        }
+
+    if os.path.exists(output_file) and not overwrite:
+        return {
+            "error": "output file already exists",
+            "input_file": input_path,
+            "output_file": output_file,
+            "overwrite": False,
+        }
+
+    parent_dir = os.path.dirname(output_file)
+    if parent_dir:
+        try:
+            os.makedirs(parent_dir, exist_ok=True)
+        except OSError as e:
+            return {"error": f"failed to create output directory: {e}", "output_file": output_file}
+
+    temp_output = f"{output_file}.tmp-{os.getpid()}"
+    try:
+        shutil.copyfile(input_path, temp_output)
+        with open(temp_output, "r+b") as out_file:
+            for patch in applied:
+                out_file.seek(int(patch["file_offset"]))
+                out_file.write(bytes.fromhex(str(patch["new_byte"])))
+
+        if overwrite:
+            os.replace(temp_output, output_file)
+        else:
+            os.rename(temp_output, output_file)
+    except Exception as e:
+        try:
+            if os.path.exists(temp_output):
+                os.remove(temp_output)
+        except OSError:
+            pass
+        return {
+            "error": f"failed to write patched file: {e}",
+            "input_file": input_path,
+            "output_file": output_file,
+        }
+
+    return {
+        "input_file": input_path,
+        "output_file": output_file,
+        "input_size": input_size,
+        "applied": len(applied),
+        "skipped": len(skipped),
+        "patches": applied[:100],
+        "skipped_patches": skipped[:100],
+        "truncated": len(applied) > 100 or len(skipped) > 100,
+    }
